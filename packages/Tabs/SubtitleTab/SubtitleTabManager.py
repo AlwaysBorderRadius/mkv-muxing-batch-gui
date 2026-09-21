@@ -108,9 +108,13 @@ class SubtitleTabManager(GlobalSetting):
         GlobalSetting.SUBTITLE_SET_DEFAULT.pop(index_to_delete, None)
         GlobalSetting.SUBTITLE_SET_FORCED.pop(index_to_delete, None)
         GlobalSetting.SUBTITLE_SET_ORDER.pop(index_to_delete, None)
+        GlobalSetting.SUBTITLE_SET_AS_REFERENCE.pop(index_to_delete, None)
+        GlobalSetting.SUBTITLE_SYNC_TO_REFERENCE.pop(index_to_delete, None)
+        GlobalSetting.SUBTITLE_SYNC_START_OVERRIDES.pop(index_to_delete, None)
         GlobalSetting.SUBTITLE_TAB_ENABLED.pop(index_to_delete, None)
         GlobalSetting.SUBTITLE_LANGUAGE.pop(index_to_delete, None)
         self.current_tab_index = self.subtitle_tabs_indices[previous_tab_index]
+        self.current_subtitle_tab.update_sync_widgets_state()
 
     def update_is_there_old_files(self, new_state):
         self.subtitle_tab_delete_button.set_is_there_old_file(new_state)

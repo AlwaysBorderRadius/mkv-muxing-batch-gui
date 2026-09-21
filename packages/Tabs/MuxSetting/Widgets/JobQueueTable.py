@@ -8,6 +8,7 @@ from PySide6.QtWidgets import QAbstractItemView, QTableWidgetItem, QHeaderView, 
 
 from packages.Startup.Options import Options
 from packages.Startup.InitializeScreenResolution import screen_size
+from packages.Startup.SubtitleStartTimeSync import compute_start_time_sync_delays
 from packages.Tabs.GlobalSetting import GlobalSetting, get_readable_filesize
 from packages.Tabs.MuxSetting.Widgets.ConfirmUsingMkvpropedit import (
     ConfirmUsingMkvpropedit,
@@ -281,6 +282,7 @@ class JobQueueTable(TableWidget):
     def __init__(self):
         super().__init__()
         self.data = []  # type: list[SingleJobData]
+        self.subtitle_sync_warnings = []
         self.total_progress = 0
         self.number_of_jobs = 0
         self.number_of_done_jobs = 0
@@ -409,8 +411,10 @@ class JobQueueTable(TableWidget):
 
     def set_row_value_subtitle(self, new_job, new_row_id):
         subtitles_count = 0
+        appended_tabs_order = []
         for i in GlobalSetting.SUBTITLE_FILES_LIST.keys():
             if len(GlobalSetting.SUBTITLE_FILES_LIST[i]) > new_row_id:
+                appended_tabs_order.append(i)
                 new_job.subtitle_found = True
                 new_job.subtitle_name.append(
                     GlobalSetting.SUBTITLE_FILES_LIST[i][new_row_id]
@@ -426,6 +430,12 @@ class JobQueueTable(TableWidget):
                 new_job.subtitle_set_at_top.append(GlobalSetting.SUBTITLE_SET_ORDER[i])
 
                 subtitles_count += 1
+        if subtitles_count > 1:
+            self.apply_subtitle_start_time_sync(
+                new_job=new_job,
+                new_row_id=new_row_id,
+                appended_tabs_order=appended_tabs_order,
+            )
         if subtitles_count == 1:
             new_job.subtitle_found = True
             self.setCellWidget(
@@ -459,6 +469,52 @@ class JobQueueTable(TableWidget):
                 InfoWithOptionsCell(
                     tool_tip="Multiple Subtitles\nDouble click for more details"
                 ),
+            )
+
+    def apply_subtitle_start_time_sync(self, new_job, new_row_id, appended_tabs_order):
+        reference_positions = [
+            position
+            for position, tab_index in enumerate(appended_tabs_order)
+            if GlobalSetting.SUBTITLE_SET_AS_REFERENCE[tab_index]
+        ]
+        sync_positions = [
+            position
+            for position, tab_index in enumerate(appended_tabs_order)
+            if GlobalSetting.SUBTITLE_SYNC_TO_REFERENCE[tab_index]
+        ]
+        if not sync_positions:
+            return
+        if len(reference_positions) > 1:
+            self.subtitle_sync_warnings.append(
+                "Video: "
+                + str(new_job.video_name)
+                + " - more than one group is marked as start-time reference, only "
+                "the first one will be used"
+            )
+        reference_position = reference_positions[0] if reference_positions else None
+        if reference_position is None:
+            self.subtitle_sync_warnings.append(
+                'No start-time reference group is selected (check "Use as '
+                'Start-Time Reference" in the Subtitle tab)'
+            )
+            return
+        start_time_overrides = {}
+        for position, tab_index in enumerate(appended_tabs_order):
+            override_map = GlobalSetting.SUBTITLE_SYNC_START_OVERRIDES.get(tab_index, {})
+            absolute_path = new_job.subtitle_name_absolute[position]
+            if absolute_path in override_map:
+                start_time_overrides[absolute_path] = override_map[absolute_path]
+        new_delays, warnings = compute_start_time_sync_delays(
+            file_absolute_paths=new_job.subtitle_name_absolute,
+            current_delays_seconds=new_job.subtitle_delay,
+            reference_position=reference_position,
+            sync_positions=sync_positions,
+            start_time_overrides=start_time_overrides,
+        )
+        new_job.subtitle_delay = new_delays
+        for warning in warnings:
+            self.subtitle_sync_warnings.append(
+                "Video: " + str(new_job.video_name) + " - " + warning
             )
 
     def set_row_value_audio(self, new_job, new_row_id):
@@ -817,6 +873,7 @@ class JobQueueTable(TableWidget):
 
     def setup_queue(self):
         self.clear_queue()
+        self.subtitle_sync_warnings = []
         self.hide()
         self.setRowCount(len(GlobalSetting.VIDEO_FILES_LIST))
         for i in range(len(GlobalSetting.VIDEO_FILES_LIST)):

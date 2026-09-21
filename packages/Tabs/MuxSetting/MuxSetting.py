@@ -46,6 +46,7 @@ from packages.Tabs.MuxSetting.Widgets.MakeThisTrackDefaultComboBox import (
     MakeThisTrackDefaultComboBox,
 )
 from packages.Tabs.MuxSetting.Widgets.NoSpaceWarningDialog import NoSpaceWarningDialog
+from packages.Widgets.WarningDialog import WarningDialog
 from packages.Tabs.MuxSetting.Widgets.OnlyKeepThoseAudiosCheckBox import (
     OnlyKeepThoseAudiosCheckBox,
 )
@@ -661,6 +662,7 @@ class MuxSettingTab(QWidget):
 
     def add_to_queue_button_clicked(self):
         self.job_queue_layout.setup_queue()
+        self.show_subtitle_sync_warnings()
         self.enable_muxing_setting()
         if not GlobalSetting.JOB_QUEUE_EMPTY:
             self.disable_editable_widgets()
@@ -670,6 +672,19 @@ class MuxSettingTab(QWidget):
         else:
             self.enable_editable_widgets()
             self.setup_enable_options_based_on_global_state()
+
+    def show_subtitle_sync_warnings(self):
+        warnings = self.job_queue_layout.table.subtitle_sync_warnings
+        if not warnings:
+            return
+        unique_warnings = list(dict.fromkeys(warnings))
+        warning_dialog = WarningDialog(
+            window_title="Subtitle Start-Time Sync",
+            info_message="Some subtitles could not be synchronized:\n\n"
+            + "\n".join(unique_warnings),
+            parent=self,
+        )
+        warning_dialog.execute_wth_no_block()
 
     def tab_clicked(self):
         self.job_queue_layout.show_necessary_table_columns()

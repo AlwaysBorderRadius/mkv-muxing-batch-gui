@@ -24,18 +24,27 @@ from packages.Tabs.SubtitleTab.Widgets.SubtitleLanguageComboBox import (
 from packages.Tabs.SubtitleTab.Widgets.SubtitleMuxOrderWidget import (
     SubtitleMuxOrderWidget,
 )
+from packages.Tabs.SubtitleTab.Widgets.SubtitleSetAsReferenceCheckBox import (
+    SubtitleSetAsReferenceCheckBox,
+)
 from packages.Tabs.SubtitleTab.Widgets.SubtitleSetDefaultCheckBox import (
     SubtitleSetDefaultCheckBox,
 )
 from packages.Tabs.SubtitleTab.Widgets.SubtitleSetForcedCheckBox import (
     SubtitleSetForcedCheckBox,
 )
+from packages.Tabs.SubtitleTab.Widgets.SubtitleStartReviewButton import (
+    SubtitleStartReviewButton,
+)
+from packages.Tabs.SubtitleTab.Widgets.SubtitleSyncToReferenceCheckBox import (
+    SubtitleSyncToReferenceCheckBox,
+)
 from packages.Tabs.SubtitleTab.Widgets.SubtitleSourceButton import SubtitleSourceButton
 from packages.Tabs.SubtitleTab.Widgets.SubtitleSourceLineEdit import (
     SubtitleSourceLineEdit,
 )
-from packages.Tabs.SubtitleTab.Widgets.SubtitleTrackNameLineEdit import (
-    SubtitleTrackNameLineEdit,
+from packages.Tabs.SubtitleTab.Widgets.SubtitleTrackNameComboBox import (
+    SubtitleTrackNameComboBox,
 )
 from packages.Widgets.RefreshFilesButton import RefreshFilesButton
 from packages.Widgets.InvalidPathDialog import InvalidPathDialog
@@ -62,22 +71,31 @@ class SubtitleSelectionSetting(QGroupBox):
         self.subtitle_language_label = QLabel("Language:")
         self.subtitle_extension_label = QLabel("Subtitle Extension:")
         self.subtitle_delay_label = QLabel("Delay:")
+        self.subtitle_sync_label = QLabel("Start-Time Sync:")
         self.subtitle_source_lineEdit = SubtitleSourceLineEdit()
         self.subtitle_source_button = SubtitleSourceButton()
         self.subtitle_clear_button = SubtitleClearButton()
         self.subtitle_refresh_files_button = RefreshFilesButton()
         self.subtitle_extensions_comboBox = SubtitleExtensionsCheckableComboBox()
         self.subtitle_language_comboBox = SubtitleLanguageComboBox(self.tab_index)
-        self.subtitle_track_name_lineEdit = SubtitleTrackNameLineEdit(self.tab_index)
+        self.subtitle_track_name_comboBox = SubtitleTrackNameComboBox(self.tab_index)
         self.subtitle_delay_spin = SubtitleDelayDoubleSpinBox(self.tab_index)
         self.subtitle_set_forced_checkBox = SubtitleSetForcedCheckBox(self.tab_index)
         self.subtitle_set_default_checkBox = SubtitleSetDefaultCheckBox(self.tab_index)
+        self.subtitle_set_as_reference_checkBox = SubtitleSetAsReferenceCheckBox(
+            self.tab_index
+        )
+        self.subtitle_sync_to_reference_checkBox = SubtitleSyncToReferenceCheckBox(
+            self.tab_index
+        )
+        self.subtitle_start_review_button = SubtitleStartReviewButton(self.tab_index)
         self.subtitle_mux_order_widget = SubtitleMuxOrderWidget(self.tab_index)
         self.subtitle_match_layout = MatchSubtitleLayout(
             parent=self, tab_index=self.tab_index
         )
         self.subtitle_options_layout = QHBoxLayout()
         self.subtitle_set_default_forced_layout = QHBoxLayout()
+        self.subtitle_sync_layout = QHBoxLayout()
         # self.MainLayout = QVBoxLayout()
         self.main_layout = QGridLayout()
         self.setObjectName("main_groupBox")
@@ -120,6 +138,9 @@ class SubtitleSelectionSetting(QGroupBox):
         GlobalSetting.SUBTITLE_TAB_ENABLED[self.tab_index] = False
         GlobalSetting.SUBTITLE_SET_DEFAULT[self.tab_index] = False
         GlobalSetting.SUBTITLE_SET_FORCED[self.tab_index] = False
+        GlobalSetting.SUBTITLE_SET_AS_REFERENCE[self.tab_index] = False
+        GlobalSetting.SUBTITLE_SYNC_TO_REFERENCE[self.tab_index] = False
+        GlobalSetting.SUBTITLE_SYNC_START_OVERRIDES[self.tab_index] = {}
         GlobalSetting.SUBTITLE_SET_ORDER[self.tab_index] = -1
         GlobalSetting.SUBTITLE_LANGUAGE[self.tab_index] = (
             Options.CurrentPreset.Default_Subtitle_Language
@@ -139,10 +160,17 @@ class SubtitleSelectionSetting(QGroupBox):
     def setup_layouts(self):
         self.setup_subtitle_check_default_forced_layout()
         self.setup_subtitle_options_layout()
+        self.setup_subtitle_sync_layout()
         self.setup_main_layout()
         # self.setLayout(self.MainLayout)
         # self.MainLayout.addWidget(self.subtitle_tab_comboBox)
         # self.MainLayout.addWidget(self.subtitle_main_groupBox)
+
+    def setup_subtitle_sync_layout(self):
+        self.subtitle_sync_layout.addWidget(self.subtitle_set_as_reference_checkBox)
+        self.subtitle_sync_layout.addWidget(self.subtitle_sync_to_reference_checkBox)
+        self.subtitle_sync_layout.addWidget(self.subtitle_start_review_button)
+        self.subtitle_sync_layout.addStretch()
 
     def setup_subtitle_check_default_forced_layout(self):
         self.subtitle_set_default_forced_layout.addWidget(
@@ -159,22 +187,23 @@ class SubtitleSelectionSetting(QGroupBox):
         self.subtitle_options_layout.addWidget(self.subtitle_extensions_comboBox, 2)
         self.subtitle_options_layout.addWidget(self.subtitle_language_label)
         self.subtitle_options_layout.addWidget(self.subtitle_language_comboBox, 5)
-        self.subtitle_options_layout.addWidget(self.subtitle_track_name_lineEdit, 2)
+        self.subtitle_options_layout.addWidget(self.subtitle_track_name_comboBox, 2)
         self.subtitle_options_layout.addWidget(self.subtitle_delay_label)
         self.subtitle_options_layout.addWidget(self.subtitle_delay_spin)
         self.subtitle_options_layout.addLayout(self.subtitle_set_default_forced_layout, 7)
         self.subtitle_options_layout.addStretch()
 
     def setup_main_layout(self):
-        pass
         self.main_layout.addWidget(self.subtitle_source_label, 0, 0)
         self.main_layout.addWidget(self.subtitle_source_lineEdit, 0, 1, 1, 1)
         self.main_layout.addWidget(self.subtitle_clear_button, 0, 2, 1, 1)
         self.main_layout.addWidget(self.subtitle_refresh_files_button, 0, 3, 1, 1)
         self.main_layout.addWidget(self.subtitle_source_button, 0, 4)
-        self.main_layout.addWidget(self.subtitle_extension_label, 1, 0)
-        self.main_layout.addLayout(self.subtitle_options_layout, 1, 1, 1, 4)
-        self.main_layout.addWidget(self.subtitle_match_groupBox, 2, 0, 1, -1)
+        self.main_layout.addWidget(self.subtitle_sync_label, 1, 0)
+        self.main_layout.addLayout(self.subtitle_sync_layout, 1, 1, 1, 4)
+        self.main_layout.addWidget(self.subtitle_extension_label, 2, 0)
+        self.main_layout.addLayout(self.subtitle_options_layout, 2, 1, 1, 4)
+        self.main_layout.addWidget(self.subtitle_match_groupBox, 3, 0, 1, -1)
 
     def setup_subtitle_main_groupBox(self):
         self.setLayout(self.main_layout)
@@ -302,6 +331,7 @@ class SubtitleSelectionSetting(QGroupBox):
         self.files_names_list = []
         self.files_names_absolute_list = []
         self.files_names_absolute_list_with_dropped_files = []
+        GlobalSetting.SUBTITLE_SYNC_START_OVERRIDES[self.tab_index] = {}
         self.subtitle_refresh_files_button.update_current_path(new_path="")
         self.subtitle_refresh_files_button.setEnabled(True)
         self.subtitle_source_lineEdit.set_text_safe_change("")
@@ -333,9 +363,11 @@ class SubtitleSelectionSetting(QGroupBox):
                 Options.CurrentPreset.Default_Subtitle_Extensions
             )
             self.subtitle_extensions_comboBox.setData(self.current_subtitle_extensions)
-            self.subtitle_track_name_lineEdit.setText("")
+            self.subtitle_track_name_comboBox.setEditText("")
             self.subtitle_set_forced_checkBox.setChecked(False)
             self.subtitle_set_default_checkBox.setChecked(False)
+            self.subtitle_set_as_reference_checkBox.setChecked(False)
+            self.subtitle_sync_to_reference_checkBox.setChecked(False)
             self.is_drag_and_drop = False
             self.subtitle_source_lineEdit.set_is_drag_and_drop(False)
             self.subtitle_delay_spin.setValue(0)
@@ -345,6 +377,9 @@ class SubtitleSelectionSetting(QGroupBox):
             GlobalSetting.SUBTITLE_DELAY[self.tab_index] = 0.0
             GlobalSetting.SUBTITLE_SET_DEFAULT[self.tab_index] = False
             GlobalSetting.SUBTITLE_SET_FORCED[self.tab_index] = False
+            GlobalSetting.SUBTITLE_SET_AS_REFERENCE[self.tab_index] = False
+            GlobalSetting.SUBTITLE_SYNC_TO_REFERENCE[self.tab_index] = False
+            GlobalSetting.SUBTITLE_SYNC_START_OVERRIDES[self.tab_index] = {}
             GlobalSetting.SUBTITLE_SET_ORDER[self.tab_index] = -1
             GlobalSetting.SUBTITLE_TAB_ENABLED[self.tab_index] = False
             GlobalSetting.SUBTITLE_LANGUAGE[self.tab_index] = ""
@@ -374,6 +409,8 @@ class SubtitleSelectionSetting(QGroupBox):
     def tab_clicked(self):
         self.show_subtitle_files_list()
         self.show_video_files_list()
+        self.subtitle_track_name_comboBox.refresh_favorites()
+        self.update_sync_widgets_state()
         if not GlobalSetting.JOB_QUEUE_EMPTY:
             self.update_subtitle_set_default_forced_state()
             self.disable_editable_widgets()
@@ -381,7 +418,18 @@ class SubtitleSelectionSetting(QGroupBox):
             self.enable_editable_widgets()
             self.check_if_video_modify_old_tracks_activated()
             self.update_subtitle_set_default_forced_state()
+            self.update_sync_widgets_state()
             self.subtitle_mux_order_widget.check_current_status()
+
+    def update_sync_widgets_state(self):
+        self.subtitle_set_as_reference_checkBox.update_check_state()
+        self.subtitle_sync_to_reference_checkBox.update_check_state()
+        self.subtitle_start_review_button.update_check_state()
+        can_sync = (
+            len(GlobalSetting.SUBTITLE_FILES_LIST) >= 2 and GlobalSetting.JOB_QUEUE_EMPTY
+        )
+        self.subtitle_set_as_reference_checkBox.setEnabled(can_sync)
+        self.subtitle_sync_to_reference_checkBox.setEnabled(can_sync)
 
     def check_if_video_modify_old_tracks_activated(self):
         if GlobalSetting.VIDEO_OLD_TRACKS_SUBTITLES_REORDER_ACTIVATED:
@@ -399,10 +447,13 @@ class SubtitleSelectionSetting(QGroupBox):
         self.subtitle_source_button.setEnabled(False)
         self.subtitle_extensions_comboBox.setEnabled(False)
         self.subtitle_language_comboBox.setEnabled(False)
-        self.subtitle_track_name_lineEdit.setEnabled(False)
+        self.subtitle_track_name_comboBox.setEnabled(False)
         self.subtitle_delay_spin.setEnabled(False)
         self.subtitle_set_default_checkBox.setEnabled(False)
         self.subtitle_set_forced_checkBox.setEnabled(False)
+        self.subtitle_set_as_reference_checkBox.setEnabled(False)
+        self.subtitle_sync_to_reference_checkBox.setEnabled(False)
+        self.subtitle_start_review_button.setEnabled(False)
         self.setCheckable(False)
         self.subtitle_clear_button.setEnabled(False)
         self.subtitle_mux_order_widget.setEnabled(False)
@@ -414,7 +465,7 @@ class SubtitleSelectionSetting(QGroupBox):
         self.subtitle_source_button.setEnabled(True)
         self.subtitle_extensions_comboBox.setEnabled(True)
         self.subtitle_language_comboBox.setEnabled(True)
-        self.subtitle_track_name_lineEdit.setEnabled(True)
+        self.subtitle_track_name_comboBox.setEnabled(True)
         self.subtitle_delay_spin.setEnabled(True)
         self.subtitle_set_default_checkBox.setEnabled(True)
         self.subtitle_set_forced_checkBox.setEnabled(True)
@@ -425,6 +476,7 @@ class SubtitleSelectionSetting(QGroupBox):
         else:
             self.disable_subtitle_refresh_button_cause_drag_and_drop()
         self.subtitle_match_layout.enable_editable_widgets()
+        self.update_sync_widgets_state()
 
     def sync_subtitle_files_with_global_files(self):
         self.files_names_list = GlobalSetting.SUBTITLE_FILES_LIST[self.tab_index]
@@ -514,6 +566,8 @@ class SubtitleSelectionSetting(QGroupBox):
     def set_preset_options(self):
         self.create_properties()
         self.create_global_properties()
+        self.subtitle_set_as_reference_checkBox.setChecked(False)
+        self.subtitle_sync_to_reference_checkBox.setChecked(False)
         self.subtitle_language_comboBox.initialize()
         self.subtitle_language_comboBox.set_current_index()
         self.subtitle_extensions_comboBox.set_current_extensions()

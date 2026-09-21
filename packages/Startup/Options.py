@@ -19,6 +19,53 @@ def get_names_list_of_presets():
     return names_list
 
 
+DEFAULT_SUBTITLE_KARAOKE_STYLE_KEYWORDS = [
+    "kara",
+    "karaoke",
+    "romaji",
+    "op",
+    "ed",
+    "song",
+    "opening",
+    "ending",
+    "note",
+    "sign",
+    "signs",
+]
+DEFAULT_SUBTITLE_KARAOKE_EFFECT_KEYWORDS = ["karaoke", "fx"]
+
+
+def normalize_keywords_list(keywords) -> list[str]:
+    if not isinstance(keywords, list):
+        return []
+    normalized_keywords = []
+    for keyword in keywords:
+        keyword_text = str(keyword).strip().lower()
+        if keyword_text:
+            normalized_keywords.append(keyword_text)
+    return normalized_keywords
+
+
+def parse_keywords_text(text: str) -> list[str]:
+    parsed_keywords = []
+    for keyword in text.split(","):
+        keyword_text = keyword.strip().lower()
+        if keyword_text:
+            parsed_keywords.append(keyword_text)
+    return parsed_keywords
+
+
+def normalize_track_names_list(names) -> list[str]:
+    if not isinstance(names, list):
+        return []
+    normalized_names = []
+    for name in names:
+        name_text = str(name).strip()
+        if name_text and name_text not in normalized_names:
+            normalized_names.append(name_text)
+    return normalized_names
+
+
 class Options(QWidget):
     DefaultPresets = [SingleDefaultPresetsData()]
     CurrentPreset = SingleDefaultPresetsData()
@@ -26,6 +73,10 @@ class Options(QWidget):
     Dark_Mode = False
     Attachment_Expert_Mode_Info_Message_Show = True
     Choose_Preset_On_Startup = False
+    Subtitle_Karaoke_Tag_Filter = True
+    Subtitle_Karaoke_Style_Keywords = DEFAULT_SUBTITLE_KARAOKE_STYLE_KEYWORDS.copy()
+    Subtitle_Karaoke_Effect_Keywords = DEFAULT_SUBTITLE_KARAOKE_EFFECT_KEYWORDS.copy()
+    Subtitle_Favorite_Track_Names = []
 
 
 def save_options():
@@ -83,6 +134,10 @@ def save_options():
         "Dark_Mode": Options.Dark_Mode,
         "Attachment_Expert_Mode_Info_Message_Show": Options.Attachment_Expert_Mode_Info_Message_Show,
         "Choose_Preset_On_Startup": Options.Choose_Preset_On_Startup,
+        "Subtitle_Karaoke_Tag_Filter": Options.Subtitle_Karaoke_Tag_Filter,
+        "Subtitle_Karaoke_Style_Keywords": Options.Subtitle_Karaoke_Style_Keywords,
+        "Subtitle_Karaoke_Effect_Keywords": Options.Subtitle_Karaoke_Effect_Keywords,
+        "Subtitle_Favorite_Track_Names": Options.Subtitle_Favorite_Track_Names,
     }
     options_file_path = Path(SettingJsonInfoFilePath)
     with open(options_file_path, "w+", encoding="UTF-8") as option_file:
@@ -195,5 +250,31 @@ def read_option_file(option_file):
             )
             Options.Choose_Preset_On_Startup = get_data_from_json(
                 json_data=data, attribute="Choose_Preset_On_Startup", default_value=False
+            )
+            Options.Subtitle_Karaoke_Tag_Filter = get_data_from_json(
+                json_data=data,
+                attribute="Subtitle_Karaoke_Tag_Filter",
+                default_value=True,
+            )
+            Options.Subtitle_Karaoke_Style_Keywords = normalize_keywords_list(
+                get_data_from_json(
+                    json_data=data,
+                    attribute="Subtitle_Karaoke_Style_Keywords",
+                    default_value=DEFAULT_SUBTITLE_KARAOKE_STYLE_KEYWORDS,
+                )
+            )
+            Options.Subtitle_Karaoke_Effect_Keywords = normalize_keywords_list(
+                get_data_from_json(
+                    json_data=data,
+                    attribute="Subtitle_Karaoke_Effect_Keywords",
+                    default_value=DEFAULT_SUBTITLE_KARAOKE_EFFECT_KEYWORDS,
+                )
+            )
+            Options.Subtitle_Favorite_Track_Names = normalize_track_names_list(
+                get_data_from_json(
+                    json_data=data,
+                    attribute="Subtitle_Favorite_Track_Names",
+                    default_value=[],
+                )
             )
     save_options()

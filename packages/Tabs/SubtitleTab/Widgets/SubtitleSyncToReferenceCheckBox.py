@@ -1,23 +1,32 @@
-from PySide6.QtWidgets import QLineEdit
+from PySide6.QtCore import Qt
+from PySide6.QtWidgets import QCheckBox
 
-from packages.Startup.InitializeScreenResolution import screen_size
 from packages.Tabs.GlobalSetting import GlobalSetting
 
 
-class SubtitleTrackNameLineEdit(QLineEdit):
+class SubtitleSyncToReferenceCheckBox(QCheckBox):
     def __init__(self, tab_index):
         super().__init__()
         self.tab_index = tab_index
         self.hint_when_enabled = ""
-        self.setPlaceholderText("Subtitle Track Name")
-        self.setMinimumWidth(screen_size.width() // 10)
-        self.setMaximumWidth(screen_size.width() // 8)
-        self.setClearButtonEnabled(True)
-        self.setToolTip("Subtitle Track Name")
-        self.textEdited.connect(self.change_global_subtitle_track_name)
+        self.setText("Sync Start Time To Reference")
+        self.setToolTip(
+            "<nobr>Shift this group's subtitles so every file starts at the same "
+            "time as the reference group's file for the SAME row / video.<br>"
+            'Select the reference group with "Use as Start-Time Reference".<br>'
+            "Requires at least 2 subtitle groups.<br>"
+            "The first real dialogue line is used (karaoke/OP lines are skipped).<br>"
+            'Use "Review Start Lines" to see the detected line or set a custom start.'
+        )
+        self.stateChanged.connect(self.change_global_subtitle_sync_to_reference)
 
-    def change_global_subtitle_track_name(self):
-        GlobalSetting.SUBTITLE_TRACK_NAME[self.tab_index] = self.text()
+    def change_global_subtitle_sync_to_reference(self):
+        GlobalSetting.SUBTITLE_SYNC_TO_REFERENCE[self.tab_index] = (
+            self.checkState() == Qt.CheckState.Checked
+        )
+
+    def update_check_state(self):
+        self.setChecked(bool(GlobalSetting.SUBTITLE_SYNC_TO_REFERENCE[self.tab_index]))
 
     def setEnabled(self, new_state: bool):
         super().setEnabled(new_state)

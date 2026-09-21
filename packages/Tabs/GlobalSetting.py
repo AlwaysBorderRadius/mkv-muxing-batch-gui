@@ -347,6 +347,9 @@ class GlobalSetting(QWidget):
     SUBTITLE_SET_DEFAULT_DISABLED = False
     SUBTITLE_SET_FORCED_DISABLED = False
     SUBTITLE_LANGUAGE = defaultdict(str)
+    SUBTITLE_SET_AS_REFERENCE = defaultdict(bool)
+    SUBTITLE_SYNC_TO_REFERENCE = defaultdict(bool)
+    SUBTITLE_SYNC_START_OVERRIDES = defaultdict(dict)
 
     AUDIO_ENABLED = False
     AUDIO_TAB_ENABLED = defaultdict(bool)

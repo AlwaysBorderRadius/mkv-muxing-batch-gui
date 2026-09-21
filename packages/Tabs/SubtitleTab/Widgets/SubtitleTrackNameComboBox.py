@@ -1,0 +1,73 @@
+from PySide6.QtCore import Qt
+from PySide6.QtWidgets import QComboBox
+
+from packages.Startup.InitializeScreenResolution import screen_size
+from packages.Startup.Options import Options
+from packages.Tabs.GlobalSetting import GlobalSetting
+
+
+class SubtitleTrackNameComboBox(QComboBox):
+    def __init__(self, tab_index):
+        super().__init__()
+        self.tab_index = tab_index
+        self.hint_when_enabled = ""
+        self.setEditable(True)
+        self.setMinimumWidth(screen_size.width() // 10)
+        self.setMaximumWidth(screen_size.width() // 8)
+        self.lineEdit().setClearButtonEnabled(True)
+        self.lineEdit().setPlaceholderText("Subtitle Track Name")
+        self.setMaxVisibleItems(8)
+        self.setToolTip("Subtitle Track Name")
+        self.refresh_favorites()
+        self.currentTextChanged.connect(self.change_global_subtitle_track_name)
+
+    def refresh_favorites(self):
+        current_text = self.currentText()
+        self.blockSignals(True)
+        self.clear()
+        self.addItems(Options.Subtitle_Favorite_Track_Names)
+        self.setCurrentText(current_text)
+        self.blockSignals(False)
+
+    def change_global_subtitle_track_name(self):
+        GlobalSetting.SUBTITLE_TRACK_NAME[self.tab_index] = self.currentText()
+
+    def setEnabled(self, new_state: bool):
+        super().setEnabled(new_state)
+        if not new_state and not GlobalSetting.JOB_QUEUE_EMPTY:
+            if self.hint_when_enabled != "":
+                self.setToolTip(
+                    "<nobr>"
+                    + self.hint_when_enabled
+                    + "<br>"
+                    + GlobalSetting.DISABLE_TOOLTIP
+                )
+            else:
+                self.setToolTip("<nobr>" + GlobalSetting.DISABLE_TOOLTIP)
+        else:
+            self.setToolTip(self.hint_when_enabled)
+
+    def setDisabled(self, new_state: bool):
+        super().setDisabled(new_state)
+        if new_state and not GlobalSetting.JOB_QUEUE_EMPTY:
+            if self.hint_when_enabled != "":
+                self.setToolTip(
+                    "<nobr>"
+                    + self.hint_when_enabled
+                    + "<br>"
+                    + GlobalSetting.DISABLE_TOOLTIP
+                )
+            else:
+                self.setToolTip("<nobr>" + GlobalSetting.DISABLE_TOOLTIP)
+        else:
+            self.setToolTip(self.hint_when_enabled)
+
+    def setToolTip(self, new_tool_tip: str):
+        if self.isEnabled() or GlobalSetting.JOB_QUEUE_EMPTY:
+            self.hint_when_enabled = new_tool_tip
+        super().setToolTip(new_tool_tip)
+
+    def addItems(self, texts):
+        super().addItems(texts)
+        for i in range(len(texts)):
+            self.setItemData(i, texts[i], Qt.ItemDataRole.ToolTipRole)
