@@ -1,8 +1,18 @@
 # MKV Muxing Batch GUI
 
-**For anyone who found this repo from this [issue](https://github.com/yaser01/mkv-muxing-batch-gui/issues/170). I will attempt to continue develop this. Not guarantee that development will last or not.**
-
 A robust application for muxing(merging) videos with subtitles, audios, chapters, attachments alongside many customization options.
+
+## What's different in this fork?
+
+- Subtitle sync: fix subtitles batches having a different start time by auto calculating the delay based on a correctly timed batch of subtitles.
+- Save usually used subtitle track names
+- Latin American Spanish added as a language for subtitles
+- Removed unused and obsolete files and dependencies, and reorganized portable installation folder.
+- Only for windows and only portable.
+
+> [!WARNING]
+> Issue reports and feedback for enhancements are welcomed, but my priority is to add or improve features that I use or need.  
+> Also, heavy vibe coding, but heavy testing.
 
 [![Github All Releases](https://img.shields.io/github/downloads/Khaoklong51/mkv-muxing-batch-gui/total.svg?color=4DC71F&label=Downloads&logo=github")](https://github.com/Khaoklong51/mkv-muxing-batch-gui/releases/latest)
 
