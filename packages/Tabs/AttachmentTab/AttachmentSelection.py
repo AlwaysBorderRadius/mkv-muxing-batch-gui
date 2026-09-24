@@ -1,5 +1,7 @@
-from PySide6.QtCore import Signal, Qt
-from PySide6.QtWidgets import QVBoxLayout, QGroupBox, QLabel, QHBoxLayout, QGridLayout
+import os
+
+from PySide6.QtCore import Qt, Signal
+from PySide6.QtWidgets import QGridLayout, QGroupBox, QHBoxLayout, QLabel, QVBoxLayout
 
 from packages.Startup.Options import Options
 from packages.Tabs.AttachmentTab.Widgets.AllowDuplicateAttachmentsCheckBox import (
@@ -14,30 +16,38 @@ from packages.Tabs.AttachmentTab.Widgets.AttachmentSourceButton import (
 from packages.Tabs.AttachmentTab.Widgets.AttachmentSourceLineEdit import (
     AttachmentSourceLineEdit,
 )
-from packages.Tabs.AttachmentTab.Widgets.AttachmentTable import AttachmentTable
 from packages.Tabs.AttachmentTab.Widgets.AttachmentsTotalSizeValueLabel import (
     AttachmentsTotalSizeValueLabel,
 )
+from packages.Tabs.AttachmentTab.Widgets.AttachmentTable import AttachmentTable
 from packages.Tabs.AttachmentTab.Widgets.DiscardOldAttachmentsCheckBox import (
     DiscardOldAttachmentsCheckBox,
 )
 from packages.Tabs.AttachmentTab.Widgets.ExpertModeCheckBox import ExpertModeCheckBox
+from packages.Tabs.AttachmentTab.Widgets.FilterUnusedFontsCheckBox import (
+    FilterUnusedFontsCheckBox,
+)
+from packages.Tabs.AttachmentTab.Widgets.FontsAnalysisButton import (
+    FontsAnalysisButton,
+)
 from packages.Tabs.AttachmentTab.Widgets.MatchAttachmentWidget import (
     MatchAttachmentWidget,
 )
-from packages.Widgets.RefreshFilesButton import RefreshFilesButton
+from packages.Tabs.AttachmentTab.Widgets.TrimUnusedGlyphsCheckBox import (
+    TrimUnusedGlyphsCheckBox,
+)
 from packages.Tabs.GlobalSetting import (
-    sort_names_like_windows,
-    get_readable_filesize,
-    get_files_names_absolute_list,
-    get_file_name_absolute_path,
     GlobalSetting,
+    get_file_name_absolute_path,
+    get_files_names_absolute_list,
+    get_readable_filesize,
+    sort_names_like_windows,
 )
 from packages.Widgets.InvalidPathDialog import InvalidPathDialog
+from packages.Widgets.RefreshFilesButton import RefreshFilesButton
 
 # noinspection PyAttributeOutsideInit
 from packages.Widgets.WarningDialog import WarningDialog
-import os
 
 
 def get_files_size_list(files_list, folder_path):
@@ -76,6 +86,9 @@ class AttachmentSelectionSetting(GlobalSetting):
         self.discard_old_attachments_checkBox = DiscardOldAttachmentsCheckBox()
         self.allow_duplicate_attachments_checkBox = AllowDuplicateAttachmentsCheckBox()
         self.expert_mode_checkBox = ExpertModeCheckBox()
+        self.filter_unused_fonts_checkBox = FilterUnusedFontsCheckBox()
+        self.trim_unused_glyphs_checkBox = TrimUnusedGlyphsCheckBox()
+        self.fonts_analysis_button = FontsAnalysisButton()
         self.table = AttachmentTable()
         self.expert_mode_widget = MatchAttachmentWidget(parent=self)
         self.MainLayout = QVBoxLayout()
@@ -89,6 +102,13 @@ class AttachmentSelectionSetting(GlobalSetting):
         self.files_checked_list = []
         self.files_names_absolute_list = []
         self.files_size_list = []
+        self.filter_unused_fonts_checkBox.setChecked(
+            Options.Attachment_Filter_Unused_Fonts
+        )
+        self.trim_unused_glyphs_checkBox.setChecked(Options.Attachment_Trim_Unused_Glyphs)
+        self.trim_unused_glyphs_checkBox.set_trim_available(
+            Options.Attachment_Filter_Unused_Fonts
+        )
         self.setup_layouts()
         self.connect_signals()
 
@@ -221,6 +241,9 @@ class AttachmentSelectionSetting(GlobalSetting):
             self.allow_duplicate_attachments_checkBox
         )
         self.attachments_options_layout.addWidget(self.discard_old_attachments_checkBox)
+        self.attachments_options_layout.addWidget(self.filter_unused_fonts_checkBox)
+        self.attachments_options_layout.addWidget(self.trim_unused_glyphs_checkBox)
+        self.attachments_options_layout.addWidget(self.fonts_analysis_button)
 
     def setup_main_layout(self):
         self.attachment_main_layout.addWidget(self.attachment_source_label, 0, 0)
@@ -287,6 +310,9 @@ class AttachmentSelectionSetting(GlobalSetting):
 
     def connect_signals(self):
         self.attachment_source_button.clicked_signal.connect(self.update_folder_path)
+        self.filter_unused_fonts_checkBox.is_checked_signal.connect(
+            self.update_trim_check_box_enabled
+        )
         self.attachment_source_lineEdit.edit_finished_signal.connect(
             self.update_folder_path
         )
@@ -370,6 +396,9 @@ class AttachmentSelectionSetting(GlobalSetting):
         self.attachment_source_button.setEnabled(False)
         self.discard_old_attachments_checkBox.setEnabled(False)
         self.allow_duplicate_attachments_checkBox.setEnabled(False)
+        self.filter_unused_fonts_checkBox.setEnabled(False)
+        self.trim_unused_glyphs_checkBox.setEnabled(False)
+        self.fonts_analysis_button.setEnabled(False)
         self.attachment_clear_button.setEnabled(False)
         self.attachment_refresh_files_button.setEnabled(False)
         self.expert_mode_checkBox.setEnabled(False)
@@ -382,6 +411,9 @@ class AttachmentSelectionSetting(GlobalSetting):
         self.attachment_source_button.setEnabled(True)
         self.discard_old_attachments_checkBox.setEnabled(True)
         self.allow_duplicate_attachments_checkBox.setEnabled(True)
+        self.filter_unused_fonts_checkBox.setEnabled(True)
+        self.trim_unused_glyphs_checkBox.setEnabled(True)
+        self.fonts_analysis_button.setEnabled(True)
         self.expert_mode_checkBox.setEnabled(True)
         self.attachment_clear_button.setEnabled(True)
         self.table.setAcceptDrops(True)
@@ -404,6 +436,8 @@ class AttachmentSelectionSetting(GlobalSetting):
             self.attachment_total_size_value_label.set_total_size_zero()
             self.discard_old_attachments_checkBox.setChecked(False)
             self.allow_duplicate_attachments_checkBox.setChecked(False)
+            self.filter_unused_fonts_checkBox.setChecked(False)
+            self.trim_unused_glyphs_checkBox.setChecked(False)
             self.expert_mode_checkBox.setChecked(False)
             self.folder_path = ""
             self.files_names_list = []
@@ -417,6 +451,8 @@ class AttachmentSelectionSetting(GlobalSetting):
             GlobalSetting.ATTACHMENT_FILES_ABSOLUTE_PATH_LIST = []
             GlobalSetting.ATTACHMENT_FILES_CHECKING_LIST = []
             GlobalSetting.ATTACHMENT_DISCARD_OLD = False
+            GlobalSetting.ATTACHMENT_FILTER_UNUSED_FONTS = False
+            GlobalSetting.ATTACHMENT_TRIM_UNUSED_GLYPHS = False
         else:
             self.attachment_refresh_files_button.setEnabled(True)
         self.activation_signal.emit(on)
@@ -507,3 +543,6 @@ class AttachmentSelectionSetting(GlobalSetting):
 
     def update_is_there_old_files(self, new_state):
         self.attachment_clear_button.set_is_there_old_file(new_state)
+
+    def update_trim_check_box_enabled(self, enabled):
+        self.trim_unused_glyphs_checkBox.set_trim_available(bool(enabled))

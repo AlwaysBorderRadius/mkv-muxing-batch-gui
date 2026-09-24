@@ -1,6 +1,8 @@
 import json
 from pathlib import Path
+
 from PySide6.QtWidgets import QWidget
+
 from packages.Startup.GlobalFiles import SettingJsonInfoFilePath
 from packages.Widgets.SingleDefaultPresetsData import SingleDefaultPresetsData
 
@@ -72,6 +74,8 @@ class Options(QWidget):
     FavoritePresetId = 0
     Dark_Mode = False
     Attachment_Expert_Mode_Info_Message_Show = True
+    Attachment_Filter_Unused_Fonts = False
+    Attachment_Trim_Unused_Glyphs = False
     Choose_Preset_On_Startup = False
     Subtitle_Karaoke_Tag_Filter = True
     Subtitle_Karaoke_Style_Keywords = DEFAULT_SUBTITLE_KARAOKE_STYLE_KEYWORDS.copy()
@@ -133,6 +137,8 @@ def save_options():
         "FavoritePresetId": Options.FavoritePresetId,
         "Dark_Mode": Options.Dark_Mode,
         "Attachment_Expert_Mode_Info_Message_Show": Options.Attachment_Expert_Mode_Info_Message_Show,
+        "Attachment_Filter_Unused_Fonts": Options.Attachment_Filter_Unused_Fonts,
+        "Attachment_Trim_Unused_Glyphs": Options.Attachment_Trim_Unused_Glyphs,
         "Choose_Preset_On_Startup": Options.Choose_Preset_On_Startup,
         "Subtitle_Karaoke_Tag_Filter": Options.Subtitle_Karaoke_Tag_Filter,
         "Subtitle_Karaoke_Style_Keywords": Options.Subtitle_Karaoke_Style_Keywords,
@@ -247,6 +253,16 @@ def read_option_file(option_file):
                 json_data=data,
                 attribute="Attachment_Expert_Mode_Info_Message_Show",
                 default_value=True,
+            )
+            Options.Attachment_Filter_Unused_Fonts = get_data_from_json(
+                json_data=data,
+                attribute="Attachment_Filter_Unused_Fonts",
+                default_value=False,
+            )
+            Options.Attachment_Trim_Unused_Glyphs = get_data_from_json(
+                json_data=data,
+                attribute="Attachment_Trim_Unused_Glyphs",
+                default_value=False,
             )
             Options.Choose_Preset_On_Startup = get_data_from_json(
                 json_data=data, attribute="Choose_Preset_On_Startup", default_value=False

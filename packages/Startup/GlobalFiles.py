@@ -1,13 +1,13 @@
 import logging
+import os
 import struct
 import subprocess
 import sys
 from pathlib import Path
-import os
 from shutil import which
 
-from packages.Widgets.MissingFilesMessage import MissingFilesMessage
 from packages.Startup.Debug import USE_PG_PORTABLE
+from packages.Widgets.MissingFilesMessage import MissingFilesMessage
 
 
 def create_app_data_folder():
@@ -86,6 +86,8 @@ MediaInfoFolderPath = AppDataFolderPath.resolve() / "MediaInfo"
 MergeLogsFolderPath.mkdir(exist_ok=True, parents=True)
 MediaInfoFolderPath.mkdir(exist_ok=True, parents=True)
 delete_old_media_files()
+TrimmedFontsFolderPath = AppDataFolderPath.resolve() / "FontAnalysis" / "TrimmedFonts"
+TrimmedFontsFolderPath.mkdir(exist_ok=True, parents=True)
 
 
 def get_program_version(program_path: Path) -> str:

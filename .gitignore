@@ -20,3 +20,4 @@ Resources/Tools/Linux/mkvpropedit
 Resources/Tools/Linux/lib
 Resources/Tools/Other Systems/mkvmerge
 Resources/Tools/Other Systems/mkvpropedit
+*.egg-info/

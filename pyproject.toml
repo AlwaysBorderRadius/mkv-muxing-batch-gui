@@ -6,6 +6,7 @@ readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
     "comtypes>=1.4.11",
+    "fonttools>=4.54.0",
     "psutil>=7.0.0",
     "pyside6>=6.9.2",
 ]

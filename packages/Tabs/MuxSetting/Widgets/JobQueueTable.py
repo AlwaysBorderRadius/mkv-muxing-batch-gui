@@ -3,12 +3,16 @@ import time
 from pathlib import Path
 
 from PySide6.QtCore import QThread, Signal
-from PySide6.QtGui import Qt, QFontMetrics
-from PySide6.QtWidgets import QAbstractItemView, QTableWidgetItem, QHeaderView, QLabel
+from PySide6.QtGui import QFontMetrics, Qt
+from PySide6.QtWidgets import QAbstractItemView, QHeaderView, QLabel, QTableWidgetItem
 
-from packages.Startup.Options import Options
 from packages.Startup.InitializeScreenResolution import screen_size
+from packages.Startup.Options import Options
 from packages.Startup.SubtitleStartTimeSync import compute_start_time_sync_delays
+from packages.Tabs.AttachmentTab.FontAnalysis import (
+    filter_and_trim_attachments,
+    get_episode_subtitle_paths,
+)
 from packages.Tabs.GlobalSetting import GlobalSetting, get_readable_filesize
 from packages.Tabs.MuxSetting.Widgets.ConfirmUsingMkvpropedit import (
     ConfirmUsingMkvpropedit,
@@ -180,6 +184,20 @@ def set_attachments_setting_for_job(new_job, new_row_id):
             if GlobalSetting.ATTACHMENT_FILES_CHECKING_LIST[i]:
                 file_to_attach = GlobalSetting.ATTACHMENT_FILES_ABSOLUTE_PATH_LIST[i]
                 new_job.attachments_absolute_path.append(file_to_attach)
+    if (
+        GlobalSetting.ATTACHMENT_FILTER_UNUSED_FONTS
+        or GlobalSetting.ATTACHMENT_TRIM_UNUSED_GLYPHS
+    ):
+        subtitle_paths = get_episode_subtitle_paths(new_row_id)
+        try:
+            new_job.attachments_absolute_path = filter_and_trim_attachments(
+                new_job.attachments_absolute_path,
+                subtitle_paths,
+                GlobalSetting.ATTACHMENT_FILTER_UNUSED_FONTS,
+                GlobalSetting.ATTACHMENT_TRIM_UNUSED_GLYPHS,
+            )
+        except Exception:
+            pass
 
 
 Valid_CRC_String = "0123456789ABCDEF"
