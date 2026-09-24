@@ -371,20 +371,17 @@ class AttachmentSelectionSetting(GlobalSetting):
             attachment_file_name_absolute
         )
         self.files_checked_list[index] = True
-        self.attachment_total_size_value_label.attachment_checked(
-            attachment_file_name_absolute
-        )
+        self.update_total_size()
 
     def update_unchecked_attachment(self, attachment_file_name_absolute):
         index = GlobalSetting.ATTACHMENT_FILES_ABSOLUTE_PATH_LIST.index(
             attachment_file_name_absolute
         )
         self.files_checked_list[index] = False
-        self.attachment_total_size_value_label.attachment_unchecked(
-            attachment_file_name_absolute
-        )
+        self.update_total_size()
 
     def tab_clicked(self):
+        self.update_total_size()
         self.expert_mode_widget.show_video_files()
         if not GlobalSetting.JOB_QUEUE_EMPTY:
             self.disable_editable_widgets()
