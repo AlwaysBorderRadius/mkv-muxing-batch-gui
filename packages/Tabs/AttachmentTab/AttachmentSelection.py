@@ -300,7 +300,9 @@ class AttachmentSelectionSetting(GlobalSetting):
 
     def change_global_attachment_list(self):
         GlobalSetting.ATTACHMENT_FILES_LIST = self.files_names_list
-        GlobalSetting.ATTACHMENT_FILES_ABSOLUTE_PATH_LIST = self.files_names_absolute_list
+        GlobalSetting.ATTACHMENT_FILES_ABSOLUTE_PATH_LIST = [
+            str(path) for path in self.files_names_absolute_list
+        ]
         GlobalSetting.ATTACHMENT_FILES_CHECKING_LIST = []
         for i in range(len(self.files_names_list)):
             if self.files_checked_list[i]:
