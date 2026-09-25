@@ -428,7 +428,8 @@ def _parse_subtitle_file(path: Path) -> tuple[set[str], set[int], dict]:
             line_families = set()
             if style_name and style_name in styles:
                 line_families.add(styles[style_name])
-            for tag in tag_re.findall(text_content):
+            tags = tag_re.findall(text_content)
+            for tag in tags:
                 for element in tag.split("\\"):
                     if element.startswith("fn"):
                         family_name = element[2:].strip()
@@ -442,7 +443,13 @@ def _parse_subtitle_file(path: Path) -> tuple[set[str], set[int], dict]:
                         if reset_name:
                             style_referenced.add(reset_name)
                             if reset_name in styles:
-                                line_families.add(styles[reset_name])
+                                family = styles[reset_name]
+                                line_families.add(family)
+                                if is_dialogue:
+                                    reset_counts = family_reset_count[family]
+                                    reset_counts[reset_name] = (
+                                        reset_counts.get(reset_name, 0) + 1
+                                    )
             visible_text = tag_re.sub("", text_content)
             for character in visible_text:
                 used_chars.add(ord(character))
@@ -451,16 +458,6 @@ def _parse_subtitle_file(path: Path) -> tuple[set[str], set[int], dict]:
                     family = styles[style_name]
                     style_counts = family_style_lines[family]
                     style_counts[style_name] = style_counts.get(style_name, 0) + 1
-                for tag in tag_re.findall(text_content):
-                    for element in tag.split("\\"):
-                        if element.startswith("r") and len(element) > 1:
-                            reset_name = element[1:].strip()
-                            if reset_name and reset_name in styles:
-                                family = styles[reset_name]
-                                reset_counts = family_reset_count[family]
-                                reset_counts[reset_name] = (
-                                    reset_counts.get(reset_name, 0) + 1
-                                )
     for style_name, font_name in styles.items():
         if not font_name:
             continue

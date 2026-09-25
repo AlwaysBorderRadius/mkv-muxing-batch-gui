@@ -1,7 +1,7 @@
 import os
 from pathlib import Path
 
-from PySide6.QtCore import QEvent, QRect, QSize, Qt, QThread, Signal
+from PySide6.QtCore import QEvent, QRect, Qt, QThread, Signal
 from PySide6.QtGui import QFontMetrics
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -166,8 +166,12 @@ class FontsAnalysisDialog(MyDialog):
             2, QHeaderView.ResizeMode.Stretch
         )
         self.table.setColumnWidth(0, 300)
+        self.table.setWordWrap(True)
         self.table.setVerticalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
         self.table.setHorizontalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
+        self.table.verticalScrollBar().setSingleStep(
+            QFontMetrics(self.table.font()).lineSpacing()
+        )
         self.table.viewport().installEventFilter(self)
 
         self.episode_info_label = QLabel("")
@@ -346,20 +350,33 @@ class FontsAnalysisDialog(MyDialog):
                         mark = "✗"
                         family_lines.append(mark + "  " + family)
                         entries.append(
-                            {"kind": "family", "text": "✗  " + family, "family": family}
+                            {
+                                "kind": "family",
+                                "status": "missing_custom",
+                                "text": "✗  " + family,
+                                "family": family,
+                            }
                         )
                     else:
                         mark = "⚠"
                         family_lines.append(mark + "  " + family)
                         entries.append(
-                            {"kind": "family", "text": "⚠  " + family, "family": family}
+                            {
+                                "kind": "family",
+                                "status": "missing_system",
+                                "text": "⚠  " + family,
+                                "family": family,
+                            }
                         )
-                    evidence_lines.extend(
-                        f"{family} — {mechanism}"
-                        for mechanism in self._evidence_mechanisms(evidence)
-                    )
+                    mechanisms = self._evidence_mechanisms(evidence)
+                    if mechanisms:
+                        evidence_lines.append(f"[{family}]")
+                        evidence_lines.extend(m for m in mechanisms)
+                        evidence_lines.append("")
                 fonts_text = "\n".join(family_lines)
-                evidence_text = "\n".join(evidence_lines)
+                evidence_text = "\n".join(evidence_lines).strip()
+                if evidence_text == "":
+                    evidence_text = "—"
             fonts_item = QTableWidgetItem(fonts_text)
             evidence_item = QTableWidgetItem(evidence_text)
             fonts_item.setTextAlignment(
@@ -371,32 +388,19 @@ class FontsAnalysisDialog(MyDialog):
             fonts_item.setData(FONT_ENTRIES_ROLE, entries)
             self.table.setItem(group_index, 1, fonts_item)
             self.table.setItem(group_index, 2, evidence_item)
-        self._fit_table_rows()
-
-    def _fit_table_rows(self):
-        for row in range(self.table.rowCount()):
-            for column in range(self.table.columnCount()):
-                item = self.table.item(row, column)
-                if item is None:
-                    continue
-                text = item.text()
-                if not text:
-                    continue
-                font_metrics = QFontMetrics(item.font())
-                width = max(self.table.columnWidth(column) - 14, 80)
-                rect = font_metrics.boundingRect(
-                    QRect(0, 0, width, 1 << 30),
-                    Qt.TextWordWrap | Qt.AlignmentFlag.AlignLeft,
-                    text,
-                )
-                item.setSizeHint(QSize(width, rect.height() + 6))
         self.table.resizeRowsToContents()
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
         table = getattr(self, "table", None)
         if table is not None and table.rowCount() > 0:
-            self._fit_table_rows()
+            self.table.resizeRowsToContents()
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        table = getattr(self, "table", None)
+        if table is not None and table.rowCount() > 0:
+            self.table.resizeRowsToContents()
 
     def _evidence_mechanisms(self, evidence) -> list[str]:
         mechanisms = []
@@ -428,12 +432,17 @@ class FontsAnalysisDialog(MyDialog):
                     entries = item.data(FONT_ENTRIES_ROLE)
                     if entries:
                         entry = self._entry_at_y(item, entries, event.pos().y())
-                        if entry is None or entry["kind"] != "file":
+                        if entry is None:
                             QToolTip.hideText()
                             return True
-                        QToolTip.showText(
-                            event.globalPos(), self._file_entry_tooltip(entry)
-                        )
+                        if entry["kind"] == "file":
+                            QToolTip.showText(
+                                event.globalPos(), self._file_entry_tooltip(entry)
+                            )
+                        elif entry["kind"] == "family":
+                            QToolTip.showText(
+                                event.globalPos(), self._family_entry_tooltip(entry)
+                            )
                         return True
         return super().eventFilter(obj, event)
 
@@ -443,7 +452,7 @@ class FontsAnalysisDialog(MyDialog):
         local_y = y - top
         if local_y < 0:
             return None
-        width = max(self.table.columnWidth(1) - 14, 80)
+        width = max(self.table.columnWidth(1) - 6, 80)
         offset = 0
         for entry in entries:
             rect = font_metrics.boundingRect(
@@ -463,6 +472,22 @@ class FontsAnalysisDialog(MyDialog):
             lines.append(f"Repeated {entry['repeats']} times (identical content)")
         lines.append("Family: " + entry["family"])
         return "\n".join(lines)
+
+    def _family_entry_tooltip(self, entry) -> str:
+        family = entry["family"]
+        if entry["status"] == "missing_custom":
+            return (
+                f"Family '{family}' is used by the subtitles but no matching font "
+                "file is attached.\n\n"
+                "Add this font (plus any bold/italic variants the styled subtitles "
+                "may use) so the subtitles render as intended."
+            )
+        return (
+            f"Family '{family}' is used by the subtitles but no matching font file "
+            "is attached.\n\n"
+            "You may already have it installed in your operating system, "
+            "so the subtitles will fall back to it."
+        )
 
     def update_global_info(self, result):
         total_count = result["total_count"]
