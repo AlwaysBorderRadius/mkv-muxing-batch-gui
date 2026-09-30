@@ -4,6 +4,7 @@ import json
 import os
 import re
 import subprocess
+import threading
 import time
 from collections import defaultdict
 from pathlib import Path
@@ -22,76 +23,73 @@ from packages.Tabs.GlobalSetting import GlobalSetting
 
 FONT_EXTENSIONS = {".ttf", ".otf", ".ttc", ".otc"}
 
-COMMON_SYSTEM_FONT_FAMILIES = frozenset(
-    name.casefold()
-    for name in (
-        "Arial",
-        "Arial Black",
-        "Arial Narrow",
-        "Helvetica",
-        "Helvetica Neue",
-        "Times New Roman",
-        "Times",
-        "Courier New",
-        "Courier",
-        "Lucida Console",
-        "Lucida Sans Unicode",
-        "Calibri",
-        "Cambria",
-        "Candara",
-        "Consolas",
-        "Constantia",
-        "Corbel",
-        "Segoe UI",
-        "Segoe Script",
-        "Tahoma",
-        "Verdana",
-        "Georgia",
-        "Trebuchet MS",
-        "Impact",
-        "Comic Sans MS",
-        "Gill Sans",
-        "Futura",
-        "Palatino",
-        "Garamond",
-        "Book Antiqua",
-        "Franklin Gothic",
-        "MS Gothic",
-        "MS PGothic",
-        "MS UI Gothic",
-        " Yu Gothic",
-        "Yu Mincho",
-        "Meiryo",
-        "Hiragino Kaku Gothic",
-        "Hiragino Mincho Pro",
-        " Osaka",
-        "Osaka-Mono",
-        "Kyokasho",
-        "Noto Sans",
-        "Noto Serif",
-        "Noto Sans CJK",
-        "Noto Serif CJK",
-        "Noto Sans JP",
-        "Noto Serif JP",
-        "Liberation Sans",
-        "Liberation Serif",
-        "Liberation Mono",
-        "DejaVu Sans",
-        "DejaVu Serif",
-        "DejaVu Sans Mono",
-        "Ubuntu",
-        "Roboto",
-        "Open Sans",
-        "Lato",
-        "Cantarell",
-        "FreeSans",
-        "FreeSerif",
-        "FreeMono",
-        "Symbol",
-        "Wingdings",
-        "Webdings",
-        "Marlett",
-    )
+COMMON_SYSTEM_FONT_NAMES = (
+    "Arial",
+    "Arial Black",
+    "Arial Narrow",
+    "Helvetica",
+    "Helvetica Neue",
+    "Times New Roman",
+    "Times",
+    "Courier New",
+    "Courier",
+    "Lucida Console",
+    "Lucida Sans Unicode",
+    "Calibri",
+    "Cambria",
+    "Candara",
+    "Consolas",
+    "Constantia",
+    "Corbel",
+    "Segoe UI",
+    "Segoe Script",
+    "Tahoma",
+    "Verdana",
+    "Georgia",
+    "Trebuchet MS",
+    "Impact",
+    "Comic Sans MS",
+    "Gill Sans",
+    "Futura",
+    "Palatino",
+    "Garamond",
+    "Book Antiqua",
+    "Franklin Gothic",
+    "MS Gothic",
+    "MS PGothic",
+    "MS UI Gothic",
+    " Yu Gothic",
+    "Yu Mincho",
+    "Meiryo",
+    "Hiragino Kaku Gothic",
+    "Hiragino Mincho Pro",
+    " Osaka",
+    "Osaka-Mono",
+    "Kyokasho",
+    "Noto Sans",
+    "Noto Serif",
+    "Noto Sans CJK",
+    "Noto Serif CJK",
+    "Noto Sans JP",
+    "Noto Serif JP",
+    "Liberation Sans",
+    "Liberation Serif",
+    "Liberation Mono",
+    "DejaVu Sans",
+    "DejaVu Serif",
+    "DejaVu Sans Mono",
+    "Ubuntu",
+    "Roboto",
+    "Open Sans",
+    "Lato",
+    "Cantarell",
+    "FreeSans",
+    "FreeSerif",
+    "FreeMono",
+    "Symbol",
+    "Wingdings",
+    "Webdings",
+    "Marlett",
 )
 BASE_CHARS = (
     "\n\r\t "
@@ -130,6 +128,7 @@ _strp_cache = {}
 _identity_cache = {}
 # absolute video path -> (mtime, attachments list, subtitle tracks list)
 _embedded_assets_cache = {}
+_EMBEDDED_EXTRACT_LOCK = threading.Lock()
 _embedded_assets_cleanup_done = False
 _trim_cache_loaded = False
 _cleanup_done = False
@@ -144,7 +143,25 @@ def _cleanup_old_trimmed_fonts():
 
 
 def normalize_family_name(name) -> str:
-    return str(name).replace("@", "", 1).strip().casefold()
+    return re.sub(r"[\s\-_]+", "", str(name).replace("@", "", 1)).casefold()
+
+
+_STYLE_SUFFIX_RE = re.compile(
+    r"(?i)[\s\-_]+(extra[\s\-]?bold|semi[\s\-]?bold|ultra[\s\-]?bold|"
+    r"small[\s\-]?caps|bold|italic|oblique|regular|roman|medium|light|thin|"
+    r"black|book|heavy|hairline|display|rounded|outline|condensed|expanded|"
+    r"narrow|caps|text)$"
+)
+
+
+def _strip_style_suffix(name) -> str:
+    stripped = _STYLE_SUFFIX_RE.sub("", str(name)).strip()
+    return stripped or str(name)
+
+
+COMMON_SYSTEM_FONT_FAMILIES = frozenset(
+    normalize_family_name(_strip_style_suffix(name)) for name in COMMON_SYSTEM_FONT_NAMES
+)
 
 
 def get_content_hash(data: bytes) -> str:
@@ -174,7 +191,7 @@ def _get_families_from_ttfont(font: TTFont) -> set[str]:
     families = set()
     try:
         for record in font["name"].names:
-            if record.nameID in (1, 16):
+            if record.nameID in (1, 4, 16):
                 try:
                     value = record.toUnicode()
                 except Exception:
@@ -373,9 +390,18 @@ def _read_text_file(path: Path) -> str:
     return raw.decode("utf-8", errors="replace")
 
 
+def _is_functional_font_name(name) -> bool:
+    """True when an override font name is an ASS inline function block (e.g.
+    '!util.rand.item(paint_fonts)!') instead of a real font family."""
+    if "!" in name or "\\" in name:
+        return True
+    return re.search(r"\w+\.\w+\s*\(", name) is not None
+
+
 def _parse_subtitle_file(path: Path) -> tuple[set[str], set[int], dict]:
     text = _read_text_file(path)
     styles = {}  # style name (raw) -> normalized font name
+    family_display = {}  # normalized family -> first original spelling
     used_families = set()
     used_chars = set()
     style_referenced = set()
@@ -409,7 +435,11 @@ def _parse_subtitle_file(path: Path) -> tuple[set[str], set[int], dict]:
                     font_index = style_format.index("Fontname")
                 if font_index >= len(parts):
                     continue
-                styles[style_name] = normalize_family_name(parts[font_index])
+                raw_font_name = parts[font_index].strip()
+                normalized = normalize_family_name(raw_font_name)
+                styles[style_name] = normalized
+                if normalized:
+                    family_display.setdefault(normalized, raw_font_name)
             continue
         if in_events:
             if stripped.startswith("Format:"):
@@ -443,11 +473,16 @@ def _parse_subtitle_file(path: Path) -> tuple[set[str], set[int], dict]:
                 for element in tag.split("\\"):
                     if element.startswith("fn"):
                         family_name = element[2:].strip()
-                        if family_name and family_name not in ("0", "0.0"):
+                        if (
+                            family_name
+                            and family_name not in ("0", "0.0")
+                            and not _is_functional_font_name(family_name)
+                        ):
                             normalized = normalize_family_name(family_name)
                             used_families.add(normalized)
                             family_fn_count[normalized] += 1
                             line_families.add(normalized)
+                            family_display.setdefault(normalized, family_name)
                     elif element.startswith("r") and len(element) > 1:
                         reset_name = element[1:].strip()
                         if reset_name:
@@ -483,6 +518,7 @@ def _parse_subtitle_file(path: Path) -> tuple[set[str], set[int], dict]:
         style_counts = family_style_lines.get(family)
         reset_counts = family_reset_count.get(family)
         evidence[family] = {
+            "display": family_display.get(family, family),
             "styles": dict(style_counts) if style_counts else None,
             "fn_count": family_fn_count.get(family, 0),
             "resets": dict(reset_counts) if reset_counts else None,
@@ -619,95 +655,122 @@ def get_surviving_embedded_subtitle_track_ids(json_info) -> set[str]:
 def extract_embedded_assets(video_path) -> tuple[list[Path], list[Path]]:
     """Extract the attachments and the surviving ASS/SSA subtitle tracks of an MKV
     into the EmbeddedExtractedFolder, returning (attachments, subtitle tracks).
-    Results are cached per (path, mtime) so repeated calls are cheap."""
+    Results are cached per (path, mtime) so repeated calls are cheap. All
+    attachments/tracks are extracted with one mkvextract call per kind under a
+    lock so concurrent callers never extract the same video twice."""
     video_path = Path(video_path)
     try:
         stat = video_path.stat()
     except Exception:
         return [], []
     cache_key = str(video_path)
-    cached = _embedded_assets_cache.get(cache_key)
-    if cached is not None and cached[0] == stat.st_mtime:
-        return cached[1], cached[2]
-    try:
-        command = [
-            str(GlobalFiles.MKVMERGE_PATH),
-            "-J",
-            str(video_path),
+    with _EMBEDDED_EXTRACT_LOCK:
+        cached = _embedded_assets_cache.get(cache_key)
+        if cached is not None and cached[0] == stat.st_mtime:
+            return list(cached[1]), list(cached[2])
+        try:
+            command = [
+                str(GlobalFiles.MKVMERGE_PATH),
+                "-J",
+                str(video_path),
+            ]
+            result = subprocess.run(
+                command,
+                capture_output=True,
+                env=GlobalFiles.ENVIRONMENT,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=120,
+                check=False,
+            )
+            json_info = json.loads(result.stdout)
+        except Exception:
+            return [], []
+        clean_old_embedded_assets()
+        video_hash = hashlib.sha1(str(video_path).encode("utf-8")).hexdigest()[:12]
+
+        attachment_entries = []
+        for attachment in json_info.get("attachments", []):
+            attachment_id = attachment.get("id")
+            file_name = str(attachment.get("file_name", "attachment"))
+            if file_name.startswith(".") or "/" in file_name or "\\" in file_name:
+                file_name = f"attachment_{attachment_id}"
+            output_path = (
+                EmbeddedExtractedFolderPath / f"{video_hash}_a{attachment_id}_{file_name}"
+            )
+            attachment_entries.append((attachment_id, output_path))
+        missing_attachments = [
+            (attachment_id, output_path)
+            for attachment_id, output_path in attachment_entries
+            if not output_path.exists() or output_path.stat().st_size == 0
         ]
-        result = subprocess.run(
-            command,
-            capture_output=True,
-            env=GlobalFiles.ENVIRONMENT,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            timeout=120,
-            check=False,
-        )
-        json_info = json.loads(result.stdout)
-    except Exception:
-        return [], []
-    clean_old_embedded_assets()
-    video_hash = hashlib.sha1(str(video_path).encode("utf-8")).hexdigest()[:12]
-    attachments = []
-    for attachment in json_info.get("attachments", []):
-        attachment_id = attachment.get("id")
-        file_name = str(attachment.get("file_name", "attachment"))
-        if file_name.startswith(".") or "/" in file_name or "\\" in file_name:
-            file_name = f"attachment_{attachment_id}"
-        output_path = (
-            EmbeddedExtractedFolderPath / f"{video_hash}_a{attachment_id}_{file_name}"
-        )
-        if not output_path.exists() or output_path.stat().st_size == 0:
+        if missing_attachments:
             try:
                 extract_command = [
                     str(GlobalFiles.MKVEXTRACT_PATH),
                     str(video_path),
                     "attachments",
-                    f"{attachment_id}:{output_path}",
                 ]
+                extract_command.extend(
+                    f"{attachment_id}:{output_path}"
+                    for attachment_id, output_path in missing_attachments
+                )
                 subprocess.run(
                     extract_command,
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL,
                     env=GlobalFiles.ENVIRONMENT,
-                    timeout=120,
+                    timeout=240,
                     check=False,
                 )
             except Exception:
-                continue
-        if output_path.exists() and output_path.stat().st_size > 0:
-            attachments.append(output_path)
-    subtitle_tracks = []
-    surviving_ids = get_surviving_embedded_subtitle_track_ids(json_info)
-    for track_id in surviving_ids:
-        output_path = (
-            EmbeddedExtractedFolderPath
-            / f"{video_hash}_t{track_id}_{video_path.stem}.ass"
-        )
-        if not output_path.exists() or output_path.stat().st_size == 0:
+                pass
+        attachments = []
+        for attachment_id, output_path in attachment_entries:
+            if output_path.exists() and output_path.stat().st_size > 0:
+                attachments.append(output_path)
+
+        surviving_ids = get_surviving_embedded_subtitle_track_ids(json_info)
+        track_entries = []
+        for track_id in surviving_ids:
+            output_path = (
+                EmbeddedExtractedFolderPath
+                / f"{video_hash}_t{track_id}_{video_path.stem}.ass"
+            )
+            track_entries.append((track_id, output_path))
+        missing_tracks = [
+            (track_id, output_path)
+            for track_id, output_path in track_entries
+            if not output_path.exists() or output_path.stat().st_size == 0
+        ]
+        if missing_tracks:
             try:
                 extract_command = [
                     str(GlobalFiles.MKVEXTRACT_PATH),
                     str(video_path),
                     "tracks",
-                    f"{track_id}:{output_path}",
                 ]
+                extract_command.extend(
+                    f"{track_id}:{output_path}"
+                    for track_id, output_path in missing_tracks
+                )
                 subprocess.run(
                     extract_command,
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL,
                     env=GlobalFiles.ENVIRONMENT,
-                    timeout=120,
+                    timeout=240,
                     check=False,
                 )
             except Exception:
-                continue
-        if output_path.exists() and output_path.stat().st_size > 0:
-            subtitle_tracks.append(output_path)
-    _embedded_assets_cache[cache_key] = (stat.st_mtime, attachments, subtitle_tracks)
-    return attachments, subtitle_tracks
+                pass
+        subtitle_tracks = []
+        for track_id, output_path in track_entries:
+            if output_path.exists() and output_path.stat().st_size > 0:
+                subtitle_tracks.append(output_path)
+        _embedded_assets_cache[cache_key] = (stat.st_mtime, attachments, subtitle_tracks)
+        return list(attachments), list(subtitle_tracks)
 
 
 def get_mkv_attachments_paths_for_analysis(video_path) -> list[Path]:
@@ -736,7 +799,10 @@ def clean_old_embedded_assets():
 
 
 def is_common_system_font(family_name) -> bool:
-    return normalize_family_name(family_name) in COMMON_SYSTEM_FONT_FAMILIES
+    return (
+        normalize_family_name(_strip_style_suffix(family_name))
+        in COMMON_SYSTEM_FONT_FAMILIES
+    )
 
 
 def analyze_subtitle_groups(attachment_paths, subtitle_groups) -> dict:
@@ -814,6 +880,13 @@ def analyze_subtitle_groups(attachment_paths, subtitle_groups) -> dict:
     missing_system = sorted(
         (family for family in missing if is_common_system_font(family))
     )
+    family_display = {}
+    for group in groups:
+        evidence = group.get("evidence", {})
+        for family_key, family_evidence in evidence.items():
+            display = family_evidence.get("display")
+            if display:
+                family_display.setdefault(family_key, display)
     return {
         "groups": groups,
         "used_union": used_union,
@@ -821,6 +894,7 @@ def analyze_subtitle_groups(attachment_paths, subtitle_groups) -> dict:
         "family_files": family_files,
         "missing_custom": missing_custom,
         "missing_system": missing_system,
+        "family_display": family_display,
     }
 
 

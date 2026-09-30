@@ -1,8 +1,8 @@
 import os
 from pathlib import Path
 
-from PySide6.QtCore import QEvent, QRect, Qt, QThread, Signal
-from PySide6.QtGui import QFontMetrics
+from PySide6.QtCore import QEvent, QRect, Qt, QSize, QThread, Signal
+from PySide6.QtGui import QFontMetrics, QMovie
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QComboBox,
@@ -14,8 +14,10 @@ from PySide6.QtWidgets import (
     QTableWidgetItem,
     QToolTip,
     QVBoxLayout,
+    QWidget,
 )
 
+from packages.Startup.GlobalFiles import SpinnerIconPath
 from packages.Tabs.AttachmentTab import FontAnalysis
 from packages.Tabs.GlobalSetting import GlobalSetting, get_readable_filesize
 from packages.Widgets.MyDialog import MyDialog
@@ -27,6 +29,8 @@ INFO_STYLE = "background-color: #1565C0; color: white; padding: 6px; border-radi
 
 FONT_ENTRIES_ROLE = Qt.ItemDataRole.UserRole
 
+_ACTIVE_ANALYSIS_WORKERS = set()
+
 
 def _total_size(paths) -> int:
     total = 0
@@ -36,10 +40,6 @@ def _total_size(paths) -> int:
         except Exception:
             continue
     return total
-
-
-def _is_ass_or_ssa(path: Path) -> bool:
-    return path.suffix.lower() in (".ass", ".ssa")
 
 
 def get_episode_rows() -> int:
@@ -68,100 +68,199 @@ def get_all_attachment_paths() -> list[str]:
 
 
 class SeriesSummaryWorker(QThread):
+    episode_signal = Signal(int, dict)
     finished_signal = Signal(dict)
+    progress_signal = Signal(int)
 
-    def __init__(self, attachment_paths, parent=None):
+    def __init__(self, attachment_paths, episode_labels, parent=None):
         super().__init__(parent)
+        _ACTIVE_ANALYSIS_WORKERS.add(self)
+        self.finished.connect(self._discard_from_registry)
         self.attachment_paths = list(attachment_paths)
-        self.result = {}
+        self.episode_labels = list(episode_labels)
+        self._requested_episode = None
+
+    def request_episode(self, episode_index):
+        self._requested_episode = episode_index
+
+    def _discard_from_registry(self):
+        _ACTIVE_ANALYSIS_WORKERS.discard(self)
 
     def run(self):
-        result = {}
+        self._run_analysis()
+
+    def _run_analysis(self):
+        episode_count = get_episode_rows()
         used_families = set()
-        for tab_index in GlobalSetting.SUBTITLE_FILES_ABSOLUTE_PATH_LIST:
-            for subtitle_path in GlobalSetting.SUBTITLE_FILES_ABSOLUTE_PATH_LIST[
-                tab_index
-            ]:
-                if not subtitle_path:
-                    continue
-                single_path = Path(subtitle_path)
-                if not _is_ass_or_ssa(single_path):
-                    continue
-                try:
-                    families, _, _ = FontAnalysis.get_subtitle_font_usage(single_path)
-                except Exception:
-                    continue
-                used_families.update(families)
+        family_display = {}
+        embedded_fonts_all = []
+        embedded_subs_all = []
+        embedded_size = 0
+        used_paths = set()
+        order = list(range(episode_count))
+        position = 0
+        while position < len(order):
+            requested = self._requested_episode
+            self._requested_episode = None
+            if requested is not None and requested in order[position:]:
+                order.remove(requested)
+                order.insert(position, requested)
+            episode_index = order[position]
+            position += 1
+            video_path = None
+            if episode_index < len(GlobalSetting.VIDEO_FILES_ABSOLUTE_PATH_LIST):
+                video_path = GlobalSetting.VIDEO_FILES_ABSOLUTE_PATH_LIST[episode_index]
+            self.progress_signal.emit(episode_index)
+            embedded_fonts = []
+            embedded_subs = []
+            if GlobalSetting.ATTACHMENT_FILTER_EMBEDDED_FONTS and video_path:
+                embedded_fonts, embedded_subs = FontAnalysis.extract_embedded_assets(
+                    video_path
+                )
+            embedded_fonts = list(embedded_fonts)
+            embedded_subs = list(embedded_subs)
+            subtitle_groups = FontAnalysis.get_episode_subtitle_groups(episode_index)
+            if embedded_subs:
+                subtitle_groups = subtitle_groups + [
+                    (-1, str(subtitle_path)) for subtitle_path in embedded_subs
+                ]
+            if GlobalSetting.ATTACHMENT_EXPERT_MODE:
+                if len(GlobalSetting.ATTACHMENT_PATH_DATA_LIST) > episode_index:
+                    source_paths = GlobalSetting.ATTACHMENT_PATH_DATA_LIST[
+                        episode_index
+                    ].files_list.copy()
+                else:
+                    source_paths = []
+            else:
+                source_paths = list(self.attachment_paths)
+            if GlobalSetting.ATTACHMENT_FILTER_EMBEDDED_FONTS:
+                embedded_fonts_all.extend(embedded_fonts)
+                embedded_subs_all.extend(str(path) for path in embedded_subs)
+                embedded_size += _total_size(embedded_fonts)
+                source_paths = source_paths + [str(path) for path in embedded_fonts]
+            if subtitle_groups:
+                info = FontAnalysis.analyze_subtitle_groups(source_paths, subtitle_groups)
+                for group in info["groups"]:
+                    used_families.update(group["families"])
+                    evidence = group["evidence"]
+                    for family_key, family_evidence in evidence.items():
+                        display = family_evidence.get("display")
+                        if display:
+                            family_display.setdefault(family_key, display)
+            else:
+                info = {
+                    "groups": [],
+                    "family_files": {},
+                    "attachment_families": set(),
+                    "missing_custom": [],
+                    "missing_system": [],
+                    "family_display": {},
+                }
+            total_size = get_readable_filesize(size_bytes=_total_size(source_paths))
+            episode_label = (
+                self.episode_labels[episode_index]
+                if episode_index < len(self.episode_labels)
+                else f"Episode {episode_index + 1}"
+            )
+            embedded_info = ""
+            if GlobalSetting.ATTACHMENT_FILTER_EMBEDDED_FONTS:
+                embedded_info = (
+                    f" — {len(embedded_fonts)} font(s) and "
+                    f"{len(embedded_subs)} subtitle track(s) embedded in this MKV"
+                )
+            subtitle_paths = [path for _, path in subtitle_groups]
+            kept = FontAnalysis.filter_and_trim_attachments(
+                source_paths, subtitle_paths, True, False
+            )
+            if GlobalSetting.ATTACHMENT_FILTER_UNUSED_FONTS:
+                kept_size = get_readable_filesize(size_bytes=_total_size(kept))
+                if GlobalSetting.ATTACHMENT_TRIM_UNUSED_GLYPHS:
+                    final = FontAnalysis.filter_and_trim_attachments(
+                        source_paths, subtitle_paths, True, True
+                    )
+                    final_size = get_readable_filesize(size_bytes=_total_size(final))
+                    info_message = (
+                        f"{episode_label} keeps {len(kept)} of {len(source_paths)} "
+                        f"fonts ({kept_size} instead of {total_size})\n"
+                        f"trimmed {len(final)} of {len(kept)} files "
+                        f"({final_size} instead of {kept_size}){embedded_info}"
+                    )
+                else:
+                    info_message = (
+                        f"{episode_label} keeps {len(kept)} of {len(source_paths)} "
+                        f"fonts ({kept_size} instead of {total_size}){embedded_info}"
+                    )
+            else:
+                info_message = (
+                    f"{episode_label}: the 'Attach Only Fonts Used by Subtitles' option "
+                    "is off, so all attached fonts would be muxed "
+                    f"({len(source_paths)} files, {total_size}).{embedded_info}"
+                )
+            if subtitle_groups:
+                used_paths.update(str(path) for path in kept)
+            banner_text = ""
+            banner_style = None
+            if info["missing_custom"]:
+                banner_text = (
+                    "Fonts used by these subtitles but not attached, and not "
+                    "standard system fonts:\n"
+                    + ", ".join(
+                        info["family_display"].get(family, family)
+                        for family in info["missing_custom"]
+                    )
+                )
+                banner_style = WARNING_STYLE
+            elif info["missing_system"]:
+                banner_text = (
+                    "Standard system fonts used (not attached; the player will use "
+                    "its local fallback):\n"
+                    + ", ".join(
+                        info["family_display"].get(family, family)
+                        for family in info["missing_system"]
+                    )
+                )
+                banner_style = INFO_STYLE
+            self.episode_signal.emit(
+                episode_index,
+                {
+                    "info": info,
+                    "info_message": info_message,
+                    "banner_text": banner_text,
+                    "banner_style": banner_style,
+                },
+            )
         existing_paths = [
             Path(file_path)
             for file_path in self.attachment_paths
             if file_path and os.path.isfile(file_path)
-        ]
-        if GlobalSetting.ATTACHMENT_FILTER_EMBEDDED_FONTS:
-            for episode_index in range(get_episode_rows()):
-                if episode_index >= len(GlobalSetting.VIDEO_FILES_ABSOLUTE_PATH_LIST):
-                    continue
-                embedded_fonts, embedded_subs = FontAnalysis.extract_embedded_assets(
-                    GlobalSetting.VIDEO_FILES_ABSOLUTE_PATH_LIST[episode_index]
-                )
-                existing_paths.extend(font_path for font_path in embedded_fonts)
-                for subtitle_path in embedded_subs:
-                    try:
-                        families, _, _ = FontAnalysis.get_subtitle_font_usage(
-                            subtitle_path
-                        )
-                    except Exception:
-                        continue
-                    used_families.update(families)
+        ] + list(embedded_fonts_all)
         attachment_families = FontAnalysis.get_families_in_attachments(existing_paths)
         missing = set(used_families) - attachment_families
-        result["families"] = sorted(used_families)
-        result["missing_custom"] = sorted(
+        missing_custom = sorted(
             family for family in missing if not FontAnalysis.is_common_system_font(family)
         )
-        result["missing_system"] = sorted(
+        missing_system = sorted(
             family for family in missing if FontAnalysis.is_common_system_font(family)
         )
-        result["total_count"] = len(existing_paths)
-        result["total_size"] = _total_size(existing_paths)
         unique_paths = FontAnalysis.dedupe_attachments(existing_paths)
-        result["unique_count"] = len(unique_paths)
-        result["unique_size"] = _total_size(unique_paths)
-        used_paths = set()
-        for episode_index in range(get_episode_rows()):
-            episode_groups = FontAnalysis.get_episode_subtitle_groups(episode_index)
-            episode_subtitle_paths = [path for _, path in episode_groups]
-            embedded_episode_fonts = []
-            if GlobalSetting.ATTACHMENT_FILTER_EMBEDDED_FONTS and episode_index < len(
-                GlobalSetting.VIDEO_FILES_ABSOLUTE_PATH_LIST
-            ):
-                embedded_fonts, embedded_subs = FontAnalysis.extract_embedded_assets(
-                    GlobalSetting.VIDEO_FILES_ABSOLUTE_PATH_LIST[episode_index]
-                )
-                embedded_episode_fonts = embedded_fonts
-                episode_subtitle_paths = episode_subtitle_paths + [
-                    str(path) for path in embedded_subs
-                ]
-            if not episode_subtitle_paths:
-                continue
-            if GlobalSetting.ATTACHMENT_EXPERT_MODE:
-                if len(GlobalSetting.ATTACHMENT_PATH_DATA_LIST) > episode_index:
-                    source = GlobalSetting.ATTACHMENT_PATH_DATA_LIST[
-                        episode_index
-                    ].files_list.copy()
-                else:
-                    source = []
-            else:
-                source = existing_paths + embedded_episode_fonts
-            if not source:
-                continue
-            kept = FontAnalysis.filter_and_trim_attachments(
-                source, episode_subtitle_paths, True, False
-            )
-            used_paths.update(str(path) for path in kept)
-        result["used_count"] = len(used_paths)
-        result["used_size"] = _total_size(used_paths)
-        self.result = result
+        result = {
+            "families": sorted(used_families),
+            "missing_custom": [
+                family_display.get(family, family) for family in missing_custom
+            ],
+            "missing_system": [
+                family_display.get(family, family) for family in missing_system
+            ],
+            "total_count": len(existing_paths),
+            "total_size": _total_size(existing_paths),
+            "unique_count": len(unique_paths),
+            "unique_size": _total_size(unique_paths),
+            "used_count": len(used_paths),
+            "used_size": _total_size(used_paths),
+            "embedded_font_count": len(embedded_fonts_all),
+            "embedded_size": embedded_size,
+            "embedded_sub_count": len(embedded_subs_all),
+        }
         self.finished_signal.emit(result)
 
 
@@ -178,6 +277,24 @@ class FontsAnalysisDialog(MyDialog):
         self.banner_label = QLabel("")
         self.banner_label.setWordWrap(True)
         self.banner_label.hide()
+
+        self._closed = False
+        self._episode_cache = {}
+        self.load_icon_movie = QMovie(str(SpinnerIconPath))
+        self.load_icon_movie.setScaledSize(QSize(22, 22))
+        self.load_icon_movie.setSpeed(120)
+        self.load_icon_label = QLabel()
+        self.load_icon_label.setMovie(self.load_icon_movie)
+        self.loading_text_label = QLabel("")
+        self.loading_layout = QHBoxLayout()
+        self.loading_layout.setContentsMargins(0, 0, 0, 0)
+        self.loading_layout.setSpacing(8)
+        self.loading_layout.addWidget(self.load_icon_label)
+        self.loading_layout.addWidget(self.loading_text_label)
+        self.loading_layout.addStretch(1)
+        self.loading_widget = QWidget()
+        self.loading_widget.setLayout(self.loading_layout)
+        self.loading_widget.hide()
 
         self.table = QTableWidget(0, 3)
         self.table.setHorizontalHeaderLabels(["Subtitle Group", "Fonts", "Evidence"])
@@ -218,6 +335,7 @@ class FontsAnalysisDialog(MyDialog):
         self.main_layout = QVBoxLayout()
         self.main_layout.addLayout(self.top_layout)
         self.main_layout.addWidget(self.banner_label)
+        self.main_layout.addWidget(self.loading_widget)
         self.main_layout.addWidget(self.table, 1)
         self.main_layout.addWidget(self.episode_info_label)
         self.main_layout.addWidget(self.global_info_label)
@@ -230,15 +348,17 @@ class FontsAnalysisDialog(MyDialog):
         self.attachment_paths = get_checked_attachment_paths()
         self.episode_count = get_episode_rows()
 
+        episode_labels = []
+        for i in range(self.episode_count):
+            if i < len(GlobalSetting.VIDEO_FILES_LIST):
+                episode_labels.append(Path(GlobalSetting.VIDEO_FILES_LIST[i]).name)
+            else:
+                episode_labels.append(f"Episode {i + 1} (no video)")
+
         if self.episode_count > 0:
-            episode_labels = []
-            for i in range(self.episode_count):
-                if i < len(GlobalSetting.VIDEO_FILES_LIST):
-                    episode_labels.append(Path(GlobalSetting.VIDEO_FILES_LIST[i]).name)
-                else:
-                    episode_labels.append(f"Episode {i + 1} (no video)")
             self.episode_combo.addItems(episode_labels)
             self.episode_combo.setCurrentIndex(0)
+            self.global_info_label.setText("Analyzing episodes and embedded fonts…")
         else:
             self.episode_combo.setEnabled(False)
             self.global_info_label.setText(
@@ -246,11 +366,50 @@ class FontsAnalysisDialog(MyDialog):
                 "tabs to see the per-episode font breakdown."
             )
 
-        self.worker = SeriesSummaryWorker(get_all_attachment_paths(), parent=self)
+        self.worker = SeriesSummaryWorker(get_all_attachment_paths(), episode_labels)
+        self.worker.progress_signal.connect(self.update_loading_progress)
+        self.worker.episode_signal.connect(self.handle_episode_result)
         self.worker.finished_signal.connect(self.update_global_info)
+        self.worker.finished_signal.connect(self._global_analysis_done)
+        self.worker.finished.connect(self.worker.deleteLater)
         self.worker.start()
 
-        self.refresh_episode()
+    def _set_loading_visible(self, visible):
+        self.loading_widget.setVisible(visible)
+        if visible:
+            self.load_icon_movie.start()
+        else:
+            self.load_icon_movie.stop()
+
+    def update_loading_progress(self, episode_index):
+        if self._closed:
+            return
+        self.loading_text_label.setText(
+            f"Analyzing episode {episode_index + 1}/{self.episode_count}…"
+        )
+
+    def handle_episode_result(self, episode_index, result):
+        if self._closed:
+            return
+        self._episode_cache[episode_index] = result
+        if self.episode_combo.currentIndex() == episode_index:
+            self._render_episode_result(result)
+
+    def _global_analysis_done(self, _result):
+        if self._closed:
+            return
+        self._set_loading_visible(False)
+
+    def _render_episode_result(self, result):
+        self.banner_label.hide()
+        self.table.clearContents()
+        self.update_fonts_table(result["info"])
+        self.episode_info_label.setText(result["info_message"])
+        if result.get("banner_text"):
+            self.banner_label.setStyleSheet(result.get("banner_style") or INFO_STYLE)
+            self.banner_label.setText(result["banner_text"])
+            self.banner_label.show()
+        self._set_loading_visible(False)
 
     def refresh_episode(self, *_):
         self.banner_label.hide()
@@ -259,92 +418,15 @@ class FontsAnalysisDialog(MyDialog):
         if self.episode_count == 0 or episode_index < 0:
             self.episode_info_label.setText("")
             return
-        if GlobalSetting.ATTACHMENT_EXPERT_MODE:
-            if len(GlobalSetting.ATTACHMENT_PATH_DATA_LIST) > episode_index:
-                attachment_paths = GlobalSetting.ATTACHMENT_PATH_DATA_LIST[
-                    episode_index
-                ].files_list.copy()
-            else:
-                attachment_paths = []
+        cached = self._episode_cache.get(episode_index)
+        if cached is not None:
+            self._render_episode_result(cached)
         else:
-            attachment_paths = self.attachment_paths
-        embedded_attachment_paths = []
-        embedded_subtitle_paths = []
-        if GlobalSetting.ATTACHMENT_FILTER_EMBEDDED_FONTS and episode_index < len(
-            GlobalSetting.VIDEO_FILES_ABSOLUTE_PATH_LIST
-        ):
-            embedded_fonts, embedded_subs = FontAnalysis.extract_embedded_assets(
-                GlobalSetting.VIDEO_FILES_ABSOLUTE_PATH_LIST[episode_index]
-            )
-            embedded_attachment_paths = [str(path) for path in embedded_fonts]
-            embedded_subtitle_paths = [str(path) for path in embedded_subs]
-        attachment_paths = attachment_paths + embedded_attachment_paths
-        subtitle_groups = FontAnalysis.get_episode_subtitle_groups(episode_index)
-        if embedded_subtitle_paths:
-            subtitle_groups = subtitle_groups + [
-                (-1, subtitle_path) for subtitle_path in embedded_subtitle_paths
-            ]
-        info = FontAnalysis.analyze_subtitle_groups(attachment_paths, subtitle_groups)
-        self.update_fonts_table(info)
-
-        filter_enabled = GlobalSetting.ATTACHMENT_FILTER_UNUSED_FONTS
-        trim_enabled = GlobalSetting.ATTACHMENT_TRIM_UNUSED_GLYPHS
-        total_size = get_readable_filesize(size_bytes=_total_size(attachment_paths))
-        episode_label = self.episode_combo.currentText()
-        embedded_info = ""
-        if GlobalSetting.ATTACHMENT_FILTER_EMBEDDED_FONTS:
-            embedded_info = (
-                f" — {len(embedded_attachment_paths)} font(s) and "
-                f"{len(embedded_subtitle_paths)} subtitle track(s) embedded in this MKV"
-            )
-        if not filter_enabled:
-            info_message = (
-                f"{episode_label}: the 'Attach Only Fonts Used by Subtitles' option "
-                "is off, so all attached fonts would be muxed "
-                f"({len(attachment_paths)} files, {total_size}).{embedded_info}"
-            )
-        else:
-            subtitle_groups = [path for _, path in subtitle_groups]
-            kept = FontAnalysis.filter_and_trim_attachments(
-                attachment_paths, subtitle_groups, True, False
-            )
-            kept_size = get_readable_filesize(size_bytes=_total_size(kept))
-            if trim_enabled:
-                final = FontAnalysis.filter_and_trim_attachments(
-                    attachment_paths, subtitle_groups, True, True
-                )
-                final_size = get_readable_filesize(size_bytes=_total_size(final))
-                info_message = (
-                    f"{episode_label} keeps {len(kept)} of {len(attachment_paths)} "
-                    f"fonts ({kept_size} instead of {total_size})\n"
-                    f"trimmed {len(final)} of {len(kept)} files "
-                    f"({final_size} instead of {kept_size}){embedded_info}"
-                )
-            else:
-                info_message = (
-                    f"{episode_label} keeps {len(kept)} of {len(attachment_paths)} "
-                    f"fonts ({kept_size} instead of {total_size}){embedded_info}"
-                )
-        self.episode_info_label.setText(info_message)
-
-        missing_custom = info["missing_custom"]
-        missing_system = info["missing_system"]
-        if missing_custom:
-            banner_text = (
-                "Fonts used by these subtitles but not attached, and not "
-                "standard system fonts:\n" + ", ".join(missing_custom)
-            )
-            self.banner_label.setStyleSheet(WARNING_STYLE)
-            self.banner_label.setText(banner_text)
-            self.banner_label.show()
-        elif missing_system:
-            banner_text = (
-                "Standard system fonts used (not attached; the player will use "
-                "its local fallback):\n" + ", ".join(missing_system)
-            )
-            self.banner_label.setStyleSheet(INFO_STYLE)
-            self.banner_label.setText(banner_text)
-            self.banner_label.show()
+            self.episode_info_label.setText("")
+            self._set_loading_visible(True)
+            worker = getattr(self, "worker", None)
+            if worker is not None:
+                worker.request_episode(episode_index)
 
     def update_fonts_table(self, info):
         groups = info["groups"]
@@ -379,8 +461,10 @@ class FontsAnalysisDialog(MyDialog):
                 evidence_lines = []
                 entries = []
                 family_files = info["family_files"]
+                family_display = info["family_display"]
                 for family in sorted(families):
                     evidence = group["evidence"].get(family, {})
+                    display = family_display.get(family, family)
                     if family in info["attachment_families"]:
                         for item in family_files[family]:
                             family_lines.append("✓  " + item["display"])
@@ -396,29 +480,29 @@ class FontsAnalysisDialog(MyDialog):
                             )
                     elif family in info["missing_custom"]:
                         mark = "✗"
-                        family_lines.append(mark + "  " + family)
+                        family_lines.append(mark + "  " + display)
                         entries.append(
                             {
                                 "kind": "family",
                                 "status": "missing_custom",
-                                "text": "✗  " + family,
+                                "text": "✗  " + display,
                                 "family": family,
                             }
                         )
                     else:
                         mark = "⚠"
-                        family_lines.append(mark + "  " + family)
+                        family_lines.append(mark + "  " + display)
                         entries.append(
                             {
                                 "kind": "family",
                                 "status": "missing_system",
-                                "text": "⚠  " + family,
+                                "text": "⚠  " + display,
                                 "family": family,
                             }
                         )
                     mechanisms = self._evidence_mechanisms(evidence)
                     if mechanisms:
-                        evidence_lines.append(f"[{family}]")
+                        evidence_lines.append(f"[{display}]")
                         evidence_lines.extend(m for m in mechanisms)
                         evidence_lines.append("")
                 fonts_text = "\n".join(family_lines)
@@ -538,14 +622,33 @@ class FontsAnalysisDialog(MyDialog):
         )
 
     def update_global_info(self, result):
+        if self._closed:
+            return
         total_count = result["total_count"]
         total_size = get_readable_filesize(size_bytes=result["total_size"])
         unique_count = result["unique_count"]
         unique_size = get_readable_filesize(size_bytes=result["unique_size"])
         used_count = result["used_count"]
         used_size = get_readable_filesize(size_bytes=result["used_size"])
+        embedded_font_count = result.get("embedded_font_count", 0)
+        embedded_size = get_readable_filesize(size_bytes=result.get("embedded_size", 0))
+        embedded_sub_count = result.get("embedded_sub_count", 0)
+        video_count = len(GlobalSetting.VIDEO_FILES_ABSOLUTE_PATH_LIST)
         text_items = []
-        if total_count > 0:
+        if embedded_font_count > 0:
+            external_count = total_count - embedded_font_count
+            line = f"{video_count} videos: {embedded_font_count} font(s) embedded in the MKVs ({embedded_size})"
+            if external_count > 0:
+                line += f" + {external_count} external attachment(s)"
+            line += f" -> {unique_count} unique after dedupe ({unique_size})"
+            if used_count > 0:
+                line += f" -> {used_count} fonts actually used ({used_size})"
+            text_items.append(line)
+            if embedded_sub_count > 0:
+                text_items.append(
+                    f"{embedded_sub_count} ASS/SSA subtitle track(s) found embedded in the videos"
+                )
+        elif total_count > 0:
             line = (
                 "Attachments folder: "
                 f"{total_count} files ({total_size}) -> "
@@ -567,6 +670,17 @@ class FontsAnalysisDialog(MyDialog):
                 + ", ".join(result["missing_system"])
             )
         self.global_info_label.setText("\n".join(text_items))
+
+    def closeEvent(self, event):
+        self._closed = True
+        self.load_icon_movie.stop()
+        try:
+            self.worker.progress_signal.disconnect()
+            self.worker.episode_signal.disconnect()
+            self.worker.finished_signal.disconnect()
+        except (RuntimeError, TypeError):
+            pass
+        super().closeEvent(event)
 
     def execute(self):
         self.exec()
