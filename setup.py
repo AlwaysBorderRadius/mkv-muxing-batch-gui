@@ -25,7 +25,7 @@ include_files = [
     ["Resources/Fonts/OpenSans.ttf", "Resources/Fonts/OpenSans.ttf"],
 ]
 
-for tool in ["mkvmerge", "mkvpropedit"]:
+for tool in ["mkvmerge", "mkvpropedit", "mkvextract"]:
     src = f"Resources/Tools/{system}/{tool}{program_suffix}"
     dst = f"Resources/Tools/{system}/{tool}{program_suffix}"
     lib = f"Resources/Tools/{system}/lib"

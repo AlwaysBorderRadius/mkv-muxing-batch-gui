@@ -24,6 +24,9 @@ from packages.Tabs.AttachmentTab.Widgets.DiscardOldAttachmentsCheckBox import (
     DiscardOldAttachmentsCheckBox,
 )
 from packages.Tabs.AttachmentTab.Widgets.ExpertModeCheckBox import ExpertModeCheckBox
+from packages.Tabs.AttachmentTab.Widgets.FilterEmbeddedFontsCheckBox import (
+    FilterEmbeddedFontsCheckBox,
+)
 from packages.Tabs.AttachmentTab.Widgets.FilterUnusedFontsCheckBox import (
     FilterUnusedFontsCheckBox,
 )
@@ -87,6 +90,7 @@ class AttachmentSelectionSetting(GlobalSetting):
         self.allow_duplicate_attachments_checkBox = AllowDuplicateAttachmentsCheckBox()
         self.expert_mode_checkBox = ExpertModeCheckBox()
         self.filter_unused_fonts_checkBox = FilterUnusedFontsCheckBox()
+        self.filter_embedded_fonts_checkBox = FilterEmbeddedFontsCheckBox()
         self.trim_unused_glyphs_checkBox = TrimUnusedGlyphsCheckBox()
         self.fonts_analysis_button = FontsAnalysisButton()
         self.table = AttachmentTable()
@@ -102,11 +106,18 @@ class AttachmentSelectionSetting(GlobalSetting):
         self.files_checked_list = []
         self.files_names_absolute_list = []
         self.files_size_list = []
+        self.stored_discard_old_state = None
         self.filter_unused_fonts_checkBox.setChecked(
             Options.Attachment_Filter_Unused_Fonts
         )
         self.trim_unused_glyphs_checkBox.setChecked(Options.Attachment_Trim_Unused_Glyphs)
         self.trim_unused_glyphs_checkBox.set_trim_available(
+            Options.Attachment_Filter_Unused_Fonts
+        )
+        self.filter_embedded_fonts_checkBox.setChecked(
+            Options.Attachment_Filter_Embedded_Fonts
+        )
+        self.filter_embedded_fonts_checkBox.set_embedded_available(
             Options.Attachment_Filter_Unused_Fonts
         )
         self.setup_layouts()
@@ -242,6 +253,7 @@ class AttachmentSelectionSetting(GlobalSetting):
         )
         self.attachments_options_layout.addWidget(self.discard_old_attachments_checkBox)
         self.attachments_options_layout.addWidget(self.filter_unused_fonts_checkBox)
+        self.attachments_options_layout.addWidget(self.filter_embedded_fonts_checkBox)
         self.attachments_options_layout.addWidget(self.trim_unused_glyphs_checkBox)
         self.attachments_options_layout.addWidget(self.fonts_analysis_button)
 
@@ -313,7 +325,10 @@ class AttachmentSelectionSetting(GlobalSetting):
     def connect_signals(self):
         self.attachment_source_button.clicked_signal.connect(self.update_folder_path)
         self.filter_unused_fonts_checkBox.is_checked_signal.connect(
-            self.update_trim_check_box_enabled
+            self.update_filter_dependent_check_boxes
+        )
+        self.filter_embedded_fonts_checkBox.is_checked_signal.connect(
+            self.update_discard_old_for_embedded_fonts
         )
         self.attachment_source_lineEdit.edit_finished_signal.connect(
             self.update_folder_path
@@ -396,6 +411,7 @@ class AttachmentSelectionSetting(GlobalSetting):
         self.discard_old_attachments_checkBox.setEnabled(False)
         self.allow_duplicate_attachments_checkBox.setEnabled(False)
         self.filter_unused_fonts_checkBox.setEnabled(False)
+        self.filter_embedded_fonts_checkBox.setEnabled(False)
         self.trim_unused_glyphs_checkBox.setEnabled(False)
         self.fonts_analysis_button.setEnabled(False)
         self.attachment_clear_button.setEnabled(False)
@@ -411,6 +427,7 @@ class AttachmentSelectionSetting(GlobalSetting):
         self.discard_old_attachments_checkBox.setEnabled(True)
         self.allow_duplicate_attachments_checkBox.setEnabled(True)
         self.filter_unused_fonts_checkBox.setEnabled(True)
+        self.filter_embedded_fonts_checkBox.setEnabled(True)
         self.trim_unused_glyphs_checkBox.setEnabled(True)
         self.fonts_analysis_button.setEnabled(True)
         self.expert_mode_checkBox.setEnabled(True)
@@ -434,8 +451,10 @@ class AttachmentSelectionSetting(GlobalSetting):
             self.attachment_source_lineEdit.set_text_safe_change("")
             self.attachment_total_size_value_label.set_total_size_zero()
             self.discard_old_attachments_checkBox.setChecked(False)
+            self.stored_discard_old_state = None
             self.allow_duplicate_attachments_checkBox.setChecked(False)
             self.filter_unused_fonts_checkBox.setChecked(False)
+            self.filter_embedded_fonts_checkBox.setChecked(False)
             self.trim_unused_glyphs_checkBox.setChecked(False)
             self.expert_mode_checkBox.setChecked(False)
             self.folder_path = ""
@@ -543,5 +562,21 @@ class AttachmentSelectionSetting(GlobalSetting):
     def update_is_there_old_files(self, new_state):
         self.attachment_clear_button.set_is_there_old_file(new_state)
 
-    def update_trim_check_box_enabled(self, enabled):
+    def update_filter_dependent_check_boxes(self, enabled):
         self.trim_unused_glyphs_checkBox.set_trim_available(bool(enabled))
+        self.filter_embedded_fonts_checkBox.set_embedded_available(bool(enabled))
+
+    def update_discard_old_for_embedded_fonts(self, enabled):
+        if enabled:
+            if self.stored_discard_old_state is None:
+                self.stored_discard_old_state = (
+                    self.discard_old_attachments_checkBox.isChecked()
+                )
+            if not self.discard_old_attachments_checkBox.isChecked():
+                self.discard_old_attachments_checkBox.setChecked(True)
+        else:
+            if self.stored_discard_old_state is not None:
+                self.discard_old_attachments_checkBox.setChecked(
+                    self.stored_discard_old_state
+                )
+                self.stored_discard_old_state = None

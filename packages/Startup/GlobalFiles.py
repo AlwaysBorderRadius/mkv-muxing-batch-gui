@@ -88,6 +88,10 @@ MediaInfoFolderPath.mkdir(exist_ok=True, parents=True)
 delete_old_media_files()
 TrimmedFontsFolderPath = AppDataFolderPath.resolve() / "FontAnalysis" / "TrimmedFonts"
 TrimmedFontsFolderPath.mkdir(exist_ok=True, parents=True)
+EmbeddedExtractedFolderPath = (
+    AppDataFolderPath.resolve() / "FontAnalysis" / "EmbeddedExtracted"
+)
+EmbeddedExtractedFolderPath.mkdir(exist_ok=True, parents=True)
 
 
 def get_program_version(program_path: Path) -> str:
@@ -259,6 +263,8 @@ try:
     update_enviro_if_not_windows()
     MKVPROPEDIT_VERSION = get_program_version(MKVPROPEDIT_PATH)
     MKVMERGE_VERSION = get_program_version(MKVMERGE_PATH)
+    MKVEXTRACT_PATH = get_program_path("mkvextract")
+    MKVEXTRACT_VERSION = get_program_version(MKVEXTRACT_PATH)
 except Exception as e:
     logging.error(e)
     missing_files_message = MissingFilesMessage(error_message=str(e))

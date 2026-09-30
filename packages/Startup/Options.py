@@ -76,6 +76,7 @@ class Options(QWidget):
     Attachment_Expert_Mode_Info_Message_Show = True
     Attachment_Filter_Unused_Fonts = False
     Attachment_Trim_Unused_Glyphs = False
+    Attachment_Filter_Embedded_Fonts = False
     Choose_Preset_On_Startup = False
     Subtitle_Karaoke_Tag_Filter = True
     Subtitle_Karaoke_Style_Keywords = DEFAULT_SUBTITLE_KARAOKE_STYLE_KEYWORDS.copy()
@@ -139,6 +140,7 @@ def save_options():
         "Attachment_Expert_Mode_Info_Message_Show": Options.Attachment_Expert_Mode_Info_Message_Show,
         "Attachment_Filter_Unused_Fonts": Options.Attachment_Filter_Unused_Fonts,
         "Attachment_Trim_Unused_Glyphs": Options.Attachment_Trim_Unused_Glyphs,
+        "Attachment_Filter_Embedded_Fonts": Options.Attachment_Filter_Embedded_Fonts,
         "Choose_Preset_On_Startup": Options.Choose_Preset_On_Startup,
         "Subtitle_Karaoke_Tag_Filter": Options.Subtitle_Karaoke_Tag_Filter,
         "Subtitle_Karaoke_Style_Keywords": Options.Subtitle_Karaoke_Style_Keywords,
@@ -262,6 +264,11 @@ def read_option_file(option_file):
             Options.Attachment_Trim_Unused_Glyphs = get_data_from_json(
                 json_data=data,
                 attribute="Attachment_Trim_Unused_Glyphs",
+                default_value=False,
+            )
+            Options.Attachment_Filter_Embedded_Fonts = get_data_from_json(
+                json_data=data,
+                attribute="Attachment_Filter_Embedded_Fonts",
                 default_value=False,
             )
             Options.Choose_Preset_On_Startup = get_data_from_json(

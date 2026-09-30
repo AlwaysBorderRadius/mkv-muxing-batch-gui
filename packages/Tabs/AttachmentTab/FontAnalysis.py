@@ -1,7 +1,9 @@
 import hashlib
 import io
+import json
 import os
 import re
+import subprocess
 import time
 from collections import defaultdict
 from pathlib import Path
@@ -10,7 +12,12 @@ from fontTools import subset
 from fontTools.ttLib import TTFont
 from fontTools.ttLib.ttCollection import TTCollection
 
-from packages.Startup.GlobalFiles import TrimmedFontsFolderPath
+from packages.Startup import GlobalFiles
+from packages.Startup.GlobalFiles import (
+    EmbeddedExtractedFolderPath,
+    TrimmedFontsFolderPath,
+)
+from packages.Startup.PreDefined import ISO_639_2_LANGUAGES
 from packages.Tabs.GlobalSetting import GlobalSetting
 
 FONT_EXTENSIONS = {".ttf", ".otf", ".ttc", ".otc"}
@@ -121,6 +128,9 @@ _subtitle_usage_cache = {}
 _strp_cache = {}
 # content hash -> (identity key, display name, glyph count)
 _identity_cache = {}
+# absolute video path -> (mtime, attachments list, subtitle tracks list)
+_embedded_assets_cache = {}
+_embedded_assets_cleanup_done = False
 _trim_cache_loaded = False
 _cleanup_done = False
 
@@ -539,6 +549,190 @@ def get_episode_subtitle_groups(row_id: int) -> list[tuple[int, str]]:
 
 def get_episode_subtitle_paths(row_id: int) -> list[str]:
     return [path for _, path in get_episode_subtitle_groups(row_id)]
+
+
+_SUBTITLE_ATTACHMENT_CODEC_IDS = {"S_TEXT/ASS", "S_SSA/ASS", "S_TEXT/SSA"}
+
+
+def get_surviving_embedded_subtitle_track_ids(json_info) -> set[str]:
+    """Track ids of the ASS/SSA subtitle tracks inside the input MKV that will
+    survive the job, mirroring setup_which_old_subtitles_to_keep."""
+
+    def get_codec_id(track) -> str | None:
+        return track.get("codec_id") or track.get("properties", {}).get("codec_id")
+
+    subtitle_tracks = [
+        track
+        for track in json_info.get("tracks", [])
+        if track.get("type") == "subtitles"
+        and get_codec_id(track) in _SUBTITLE_ATTACHMENT_CODEC_IDS
+    ]
+    if not subtitle_tracks:
+        return set()
+    all_ids = {str(track["id"]) for track in subtitle_tracks}
+    if GlobalSetting.VIDEO_SOURCE_MKV_ONLY and GlobalSetting.USE_MKVPROPEDIT:
+        return all_ids
+    if GlobalSetting.MUX_SETTING_ONLY_KEEP_THOSE_SUBTITLES_ENABLED:
+        if (
+            len(GlobalSetting.MUX_SETTING_ONLY_KEEP_THOSE_SUBTITLES_TRACKS_LANGUAGES) == 0
+            and len(GlobalSetting.MUX_SETTING_ONLY_KEEP_THOSE_SUBTITLES_TRACKS_IDS) == 0
+            and len(GlobalSetting.MUX_SETTING_ONLY_KEEP_THOSE_SUBTITLES_TRACKS_NAMES) == 0
+        ):
+            return set()
+        only_keep_those = set(
+            GlobalSetting.MUX_SETTING_ONLY_KEEP_THOSE_SUBTITLES_TRACKS_IDS
+        )
+        for (
+            track_name
+        ) in GlobalSetting.MUX_SETTING_ONLY_KEEP_THOSE_SUBTITLES_TRACKS_NAMES:
+            for subtitle_track in subtitle_tracks:
+                if subtitle_track.get("properties", {}).get("track_name") == track_name:
+                    only_keep_those.add(str(subtitle_track["id"]))
+        for (
+            language
+        ) in GlobalSetting.MUX_SETTING_ONLY_KEEP_THOSE_SUBTITLES_TRACKS_LANGUAGES:
+            only_keep_those.add(ISO_639_2_LANGUAGES.get(language, language))
+        if not only_keep_those:
+            return set()
+        return {
+            str(track["id"])
+            for track in subtitle_tracks
+            if str(track["id"]) in only_keep_those
+            or track.get("properties", {}).get("language") in only_keep_those
+        }
+    if GlobalSetting.VIDEO_OLD_TRACKS_SUBTITLES_DELETED_ACTIVATED:
+        surviving = set()
+        for track_id in GlobalSetting.VIDEO_OLD_TRACKS_SUBTITLES_BULK_SETTING:
+            bulk_track = GlobalSetting.VIDEO_OLD_TRACKS_SUBTITLES_BULK_SETTING[track_id]
+            if not bulk_track.is_enabled:
+                continue
+            if not any(
+                str(subtitle_track["id"]) == str(bulk_track.id)
+                for subtitle_track in subtitle_tracks
+            ):
+                continue
+            surviving.add(str(bulk_track.id))
+        return surviving
+    return all_ids
+
+
+def extract_embedded_assets(video_path) -> tuple[list[Path], list[Path]]:
+    """Extract the attachments and the surviving ASS/SSA subtitle tracks of an MKV
+    into the EmbeddedExtractedFolder, returning (attachments, subtitle tracks).
+    Results are cached per (path, mtime) so repeated calls are cheap."""
+    video_path = Path(video_path)
+    try:
+        stat = video_path.stat()
+    except Exception:
+        return [], []
+    cache_key = str(video_path)
+    cached = _embedded_assets_cache.get(cache_key)
+    if cached is not None and cached[0] == stat.st_mtime:
+        return cached[1], cached[2]
+    try:
+        command = [
+            str(GlobalFiles.MKVMERGE_PATH),
+            "-J",
+            str(video_path),
+        ]
+        result = subprocess.run(
+            command,
+            capture_output=True,
+            env=GlobalFiles.ENVIRONMENT,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=120,
+            check=False,
+        )
+        json_info = json.loads(result.stdout)
+    except Exception:
+        return [], []
+    clean_old_embedded_assets()
+    video_hash = hashlib.sha1(str(video_path).encode("utf-8")).hexdigest()[:12]
+    attachments = []
+    for attachment in json_info.get("attachments", []):
+        attachment_id = attachment.get("id")
+        file_name = str(attachment.get("file_name", "attachment"))
+        if file_name.startswith(".") or "/" in file_name or "\\" in file_name:
+            file_name = f"attachment_{attachment_id}"
+        output_path = (
+            EmbeddedExtractedFolderPath / f"{video_hash}_a{attachment_id}_{file_name}"
+        )
+        if not output_path.exists() or output_path.stat().st_size == 0:
+            try:
+                extract_command = [
+                    str(GlobalFiles.MKVEXTRACT_PATH),
+                    str(video_path),
+                    "attachments",
+                    f"{attachment_id}:{output_path}",
+                ]
+                subprocess.run(
+                    extract_command,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    env=GlobalFiles.ENVIRONMENT,
+                    timeout=120,
+                    check=False,
+                )
+            except Exception:
+                continue
+        if output_path.exists() and output_path.stat().st_size > 0:
+            attachments.append(output_path)
+    subtitle_tracks = []
+    surviving_ids = get_surviving_embedded_subtitle_track_ids(json_info)
+    for track_id in surviving_ids:
+        output_path = (
+            EmbeddedExtractedFolderPath
+            / f"{video_hash}_t{track_id}_{video_path.stem}.ass"
+        )
+        if not output_path.exists() or output_path.stat().st_size == 0:
+            try:
+                extract_command = [
+                    str(GlobalFiles.MKVEXTRACT_PATH),
+                    str(video_path),
+                    "tracks",
+                    f"{track_id}:{output_path}",
+                ]
+                subprocess.run(
+                    extract_command,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    env=GlobalFiles.ENVIRONMENT,
+                    timeout=120,
+                    check=False,
+                )
+            except Exception:
+                continue
+        if output_path.exists() and output_path.stat().st_size > 0:
+            subtitle_tracks.append(output_path)
+    _embedded_assets_cache[cache_key] = (stat.st_mtime, attachments, subtitle_tracks)
+    return attachments, subtitle_tracks
+
+
+def get_mkv_attachments_paths_for_analysis(video_path) -> list[Path]:
+    """Attachments embedded in a single MKV (extracted on demand)."""
+    attachments, _ = extract_embedded_assets(video_path)
+    return attachments
+
+
+def clean_old_embedded_assets():
+    """Delete extracted embedded assets older than a few days (they are cheap to
+    re-extract and the MKV files are usually stable)."""
+    global _embedded_assets_cleanup_done
+    if _embedded_assets_cleanup_done:
+        return
+    _embedded_assets_cleanup_done = True
+    try:
+        cutoff = time.time() - TRIM_CACHE_MAX_AGE_DAYS * 24 * 60 * 60
+        for entry in EmbeddedExtractedFolderPath.iterdir():
+            try:
+                if entry.is_file() and entry.stat().st_mtime < cutoff:
+                    entry.unlink(missing_ok=True)
+            except Exception:
+                continue
+    except Exception:
+        pass
 
 
 def is_common_system_font(family_name) -> bool:

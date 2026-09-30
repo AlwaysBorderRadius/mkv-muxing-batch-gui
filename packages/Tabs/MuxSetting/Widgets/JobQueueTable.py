@@ -10,6 +10,7 @@ from packages.Startup.InitializeScreenResolution import screen_size
 from packages.Startup.Options import Options
 from packages.Startup.SubtitleStartTimeSync import compute_start_time_sync_delays
 from packages.Tabs.AttachmentTab.FontAnalysis import (
+    extract_embedded_assets,
     filter_and_trim_attachments,
     get_episode_subtitle_paths,
 )
@@ -187,11 +188,22 @@ def set_attachments_setting_for_job(new_job, new_row_id):
     if (
         GlobalSetting.ATTACHMENT_FILTER_UNUSED_FONTS
         or GlobalSetting.ATTACHMENT_TRIM_UNUSED_GLYPHS
+        or GlobalSetting.ATTACHMENT_FILTER_EMBEDDED_FONTS
     ):
         subtitle_paths = get_episode_subtitle_paths(new_row_id)
+        attachment_paths = new_job.attachments_absolute_path.copy()
+        if GlobalSetting.ATTACHMENT_FILTER_EMBEDDED_FONTS:
+            new_job.discard_old_attachments = True
+            try:
+                video_to_scan = GlobalSetting.VIDEO_FILES_ABSOLUTE_PATH_LIST[new_row_id]
+                embedded_fonts, embedded_subs = extract_embedded_assets(video_to_scan)
+                attachment_paths += [str(path) for path in embedded_fonts]
+                subtitle_paths += [str(path) for path in embedded_subs]
+            except Exception:
+                pass
         try:
             new_job.attachments_absolute_path = filter_and_trim_attachments(
-                new_job.attachments_absolute_path,
+                attachment_paths,
                 subtitle_paths,
                 GlobalSetting.ATTACHMENT_FILTER_UNUSED_FONTS,
                 GlobalSetting.ATTACHMENT_TRIM_UNUSED_GLYPHS,

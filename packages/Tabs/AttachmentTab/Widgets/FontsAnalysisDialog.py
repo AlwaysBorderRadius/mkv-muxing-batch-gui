@@ -97,6 +97,22 @@ class SeriesSummaryWorker(QThread):
             for file_path in self.attachment_paths
             if file_path and os.path.isfile(file_path)
         ]
+        if GlobalSetting.ATTACHMENT_FILTER_EMBEDDED_FONTS:
+            for episode_index in range(get_episode_rows()):
+                if episode_index >= len(GlobalSetting.VIDEO_FILES_ABSOLUTE_PATH_LIST):
+                    continue
+                embedded_fonts, embedded_subs = FontAnalysis.extract_embedded_assets(
+                    GlobalSetting.VIDEO_FILES_ABSOLUTE_PATH_LIST[episode_index]
+                )
+                existing_paths.extend(font_path for font_path in embedded_fonts)
+                for subtitle_path in embedded_subs:
+                    try:
+                        families, _, _ = FontAnalysis.get_subtitle_font_usage(
+                            subtitle_path
+                        )
+                    except Exception:
+                        continue
+                    used_families.update(families)
         attachment_families = FontAnalysis.get_families_in_attachments(existing_paths)
         missing = set(used_families) - attachment_families
         result["families"] = sorted(used_families)
@@ -115,6 +131,17 @@ class SeriesSummaryWorker(QThread):
         for episode_index in range(get_episode_rows()):
             episode_groups = FontAnalysis.get_episode_subtitle_groups(episode_index)
             episode_subtitle_paths = [path for _, path in episode_groups]
+            embedded_episode_fonts = []
+            if GlobalSetting.ATTACHMENT_FILTER_EMBEDDED_FONTS and episode_index < len(
+                GlobalSetting.VIDEO_FILES_ABSOLUTE_PATH_LIST
+            ):
+                embedded_fonts, embedded_subs = FontAnalysis.extract_embedded_assets(
+                    GlobalSetting.VIDEO_FILES_ABSOLUTE_PATH_LIST[episode_index]
+                )
+                embedded_episode_fonts = embedded_fonts
+                episode_subtitle_paths = episode_subtitle_paths + [
+                    str(path) for path in embedded_subs
+                ]
             if not episode_subtitle_paths:
                 continue
             if GlobalSetting.ATTACHMENT_EXPERT_MODE:
@@ -125,7 +152,7 @@ class SeriesSummaryWorker(QThread):
                 else:
                     source = []
             else:
-                source = existing_paths
+                source = existing_paths + embedded_episode_fonts
             if not source:
                 continue
             kept = FontAnalysis.filter_and_trim_attachments(
@@ -241,7 +268,22 @@ class FontsAnalysisDialog(MyDialog):
                 attachment_paths = []
         else:
             attachment_paths = self.attachment_paths
+        embedded_attachment_paths = []
+        embedded_subtitle_paths = []
+        if GlobalSetting.ATTACHMENT_FILTER_EMBEDDED_FONTS and episode_index < len(
+            GlobalSetting.VIDEO_FILES_ABSOLUTE_PATH_LIST
+        ):
+            embedded_fonts, embedded_subs = FontAnalysis.extract_embedded_assets(
+                GlobalSetting.VIDEO_FILES_ABSOLUTE_PATH_LIST[episode_index]
+            )
+            embedded_attachment_paths = [str(path) for path in embedded_fonts]
+            embedded_subtitle_paths = [str(path) for path in embedded_subs]
+        attachment_paths = attachment_paths + embedded_attachment_paths
         subtitle_groups = FontAnalysis.get_episode_subtitle_groups(episode_index)
+        if embedded_subtitle_paths:
+            subtitle_groups = subtitle_groups + [
+                (-1, subtitle_path) for subtitle_path in embedded_subtitle_paths
+            ]
         info = FontAnalysis.analyze_subtitle_groups(attachment_paths, subtitle_groups)
         self.update_fonts_table(info)
 
@@ -249,33 +291,39 @@ class FontsAnalysisDialog(MyDialog):
         trim_enabled = GlobalSetting.ATTACHMENT_TRIM_UNUSED_GLYPHS
         total_size = get_readable_filesize(size_bytes=_total_size(attachment_paths))
         episode_label = self.episode_combo.currentText()
+        embedded_info = ""
+        if GlobalSetting.ATTACHMENT_FILTER_EMBEDDED_FONTS:
+            embedded_info = (
+                f" — {len(embedded_attachment_paths)} font(s) and "
+                f"{len(embedded_subtitle_paths)} subtitle track(s) embedded in this MKV"
+            )
         if not filter_enabled:
             info_message = (
                 f"{episode_label}: the 'Attach Only Fonts Used by Subtitles' option "
                 "is off, so all attached fonts would be muxed "
-                f"({len(attachment_paths)} files, {total_size})."
+                f"({len(attachment_paths)} files, {total_size}).{embedded_info}"
             )
         else:
-            subtitle_paths = [path for _, path in subtitle_groups]
+            subtitle_groups = [path for _, path in subtitle_groups]
             kept = FontAnalysis.filter_and_trim_attachments(
-                attachment_paths, subtitle_paths, True, False
+                attachment_paths, subtitle_groups, True, False
             )
             kept_size = get_readable_filesize(size_bytes=_total_size(kept))
             if trim_enabled:
                 final = FontAnalysis.filter_and_trim_attachments(
-                    attachment_paths, subtitle_paths, True, True
+                    attachment_paths, subtitle_groups, True, True
                 )
                 final_size = get_readable_filesize(size_bytes=_total_size(final))
                 info_message = (
                     f"{episode_label} keeps {len(kept)} of {len(attachment_paths)} "
                     f"fonts ({kept_size} instead of {total_size})\n"
                     f"trimmed {len(final)} of {len(kept)} files "
-                    f"({final_size} instead of {kept_size})"
+                    f"({final_size} instead of {kept_size}){embedded_info}"
                 )
             else:
                 info_message = (
                     f"{episode_label} keeps {len(kept)} of {len(attachment_paths)} "
-                    f"fonts ({kept_size} instead of {total_size})"
+                    f"fonts ({kept_size} instead of {total_size}){embedded_info}"
                 )
         self.episode_info_label.setText(info_message)
 
