@@ -141,6 +141,10 @@ class SeriesSummaryWorker(QThread):
             if subtitle_groups:
                 info = FontAnalysis.analyze_subtitle_groups(source_paths, subtitle_groups)
                 for group in info["groups"]:
+                    if group.get("tab_index") == -1:
+                        group["track_info"] = (
+                            FontAnalysis.get_embedded_subtitle_track_info(group["path"])
+                        )
                     used_families.update(group["families"])
                     evidence = group["evidence"]
                     for family_key, family_evidence in evidence.items():
@@ -243,6 +247,7 @@ class SeriesSummaryWorker(QThread):
             family for family in missing if FontAnalysis.is_common_system_font(family)
         )
         unique_paths = FontAnalysis.dedupe_attachments(existing_paths)
+        unique_used_paths = FontAnalysis.dedupe_attachments(sorted(used_paths))
         result = {
             "families": sorted(used_families),
             "missing_custom": [
@@ -257,6 +262,8 @@ class SeriesSummaryWorker(QThread):
             "unique_size": _total_size(unique_paths),
             "used_count": len(used_paths),
             "used_size": _total_size(used_paths),
+            "used_unique_count": len(unique_used_paths),
+            "used_unique_size": _total_size(unique_used_paths),
             "embedded_font_count": len(embedded_fonts_all),
             "embedded_size": embedded_size,
             "embedded_sub_count": len(embedded_subs_all),
@@ -297,7 +304,7 @@ class FontsAnalysisDialog(MyDialog):
         self.loading_widget.hide()
 
         self.table = QTableWidget(0, 3)
-        self.table.setHorizontalHeaderLabels(["Subtitle Group", "Fonts", "Evidence"])
+        self.table.setHorizontalHeaderLabels(["Subtitle Track", "Fonts", "Evidence"])
         self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.table.verticalHeader().setVisible(False)
         self.table.horizontalHeader().setSectionResizeMode(
@@ -428,22 +435,90 @@ class FontsAnalysisDialog(MyDialog):
             if worker is not None:
                 worker.request_episode(episode_index)
 
+    def _subtitle_track_cell(self, group) -> tuple[str, str]:
+        """Cell of the subtitle-track column: first line is the track name that ends
+        up in the MKV (mkvmerge name for embedded tracks, the muxing name for
+        external ones), second line the language, track number/flags and the source
+        file. The tooltip keeps the full path plus the ASS [Script Info] title."""
+        group_path = group["path"]
+        group_name = Path(group_path).name
+        tab_index = group["tab_index"]
+        track_info = group.get("track_info") or {}
+        is_embedded = tab_index == -1
+        if is_embedded:
+            track_name = track_info.get("name") or ""
+            language = track_info.get("language") or ""
+        else:
+            track_name = GlobalSetting.SUBTITLE_TRACK_NAME.get(tab_index) or ""
+            language = GlobalSetting.SUBTITLE_LANGUAGE.get(tab_index) or ""
+        number = track_info.get("number")
+        track_id = track_info.get("id") or ""
+        details = []
+        if is_embedded:
+            if language:
+                details.append(language)
+            if number is not None:
+                details.append(f"track #{number}")
+            if track_id and str(number) != track_id:
+                details.append(f"t{track_id}")
+            if track_info.get("default"):
+                details.append("default")
+            if track_info.get("forced"):
+                details.append("forced")
+            details.append("embedded")
+        else:
+            details.append(f"Group {tab_index}")
+            if language:
+                details.append(language)
+            if track_name and group_name != track_name:
+                details.append(group_name)
+        if track_name:
+            title_line = track_name
+        elif is_embedded:
+            title_line = (
+                f"Embedded subtitle track #{number}"
+                if number is not None
+                else "Embedded subtitle track"
+            )
+        else:
+            title_line = group_name
+        tooltip_lines = []
+        if track_name:
+            tooltip_lines.append(f"Track name: {track_name}")
+        if language:
+            tooltip_lines.append(f"Language: {language}")
+        if is_embedded:
+            if number is not None:
+                tooltip_lines.append(f"Track number: {number}")
+            if track_id:
+                tooltip_lines.append(f"Track id: {track_id}")
+            flags = [
+                label
+                for label, enabled in (
+                    ("default", track_info.get("default")),
+                    ("forced", track_info.get("forced")),
+                )
+                if enabled
+            ]
+            if flags:
+                tooltip_lines.append("Flags: " + ", ".join(flags))
+        else:
+            tooltip_lines.append(f"Subtitle tab: {tab_index}")
+        tooltip_lines.append(f"Source: {group_path}")
+        subtitle_title = FontAnalysis.get_subtitle_title(group_path)
+        if subtitle_title and subtitle_title != track_name:
+            tooltip_lines.append(f"ASS title: {subtitle_title}")
+        details_text = " · ".join(details)
+        cell_text = f"{title_line}\n{details_text}" if details_text else title_line
+        return cell_text, "\n".join(tooltip_lines)
+
     def update_fonts_table(self, info):
         groups = info["groups"]
         self.table.setRowCount(len(groups))
         for group_index, group in enumerate(groups):
-            group_path = group["path"]
-            group_name = Path(group_path).name
-            tab_index = group["tab_index"]
-            track_name = GlobalSetting.SUBTITLE_TRACK_NAME.get(tab_index, "")
-            language = GlobalSetting.SUBTITLE_LANGUAGE.get(tab_index, "")
-            header_text = group_name
-            if language:
-                header_text += "   [" + language + "]"
-            if track_name and track_name not in (group_name, ""):
-                header_text += "   " + track_name
+            header_text, header_tooltip = self._subtitle_track_cell(group)
             header_item = QTableWidgetItem(header_text)
-            header_item.setToolTip(group_path)
+            header_item.setToolTip(header_tooltip)
             header_item.setTextAlignment(
                 Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop
             )
@@ -630,6 +705,10 @@ class FontsAnalysisDialog(MyDialog):
         unique_size = get_readable_filesize(size_bytes=result["unique_size"])
         used_count = result["used_count"]
         used_size = get_readable_filesize(size_bytes=result["used_size"])
+        used_unique_count = result.get("used_unique_count", 0)
+        used_unique_size = get_readable_filesize(
+            size_bytes=result.get("used_unique_size", 0)
+        )
         embedded_font_count = result.get("embedded_font_count", 0)
         embedded_size = get_readable_filesize(size_bytes=result.get("embedded_size", 0))
         embedded_sub_count = result.get("embedded_sub_count", 0)
@@ -641,9 +720,17 @@ class FontsAnalysisDialog(MyDialog):
             if external_count > 0:
                 line += f" + {external_count} external attachment(s)"
             line += f" -> {unique_count} unique after dedupe ({unique_size})"
-            if used_count > 0:
-                line += f" -> {used_count} fonts actually used ({used_size})"
+            if used_unique_count > 0:
+                line += (
+                    f" -> {used_unique_count} actually used by the subtitles "
+                    f"({used_unique_size})"
+                )
             text_items.append(line)
+            if used_count > 0:
+                text_items.append(
+                    f"In total {used_size} of the {total_size} of attachments will be "
+                    f"muxed ({used_count} file(s) across the {video_count} episodes)."
+                )
             if embedded_sub_count > 0:
                 text_items.append(
                     f"{embedded_sub_count} ASS/SSA subtitle track(s) found embedded in the videos"
@@ -654,9 +741,17 @@ class FontsAnalysisDialog(MyDialog):
                 f"{total_count} files ({total_size}) -> "
                 f"{unique_count} unique after dedupe ({unique_size})"
             )
-            if used_count > 0:
-                line += f" -> {used_count} fonts actually used ({used_size})"
+            if used_unique_count > 0:
+                line += (
+                    f" -> {used_unique_count} actually used by the subtitles "
+                    f"({used_unique_size})"
+                )
             text_items.append(line)
+            if used_count > 0:
+                text_items.append(
+                    f"In total {used_size} of the {total_size} of attachments will be "
+                    f"muxed ({used_count} file(s) across the {video_count} episodes)."
+                )
         else:
             text_items.append("No attachments loaded.")
         if result["missing_custom"]:

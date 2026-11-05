@@ -652,6 +652,78 @@ def get_surviving_embedded_subtitle_track_ids(json_info) -> set[str]:
     return all_ids
 
 
+_embedded_subtitle_info_cache: dict[str, dict] = {}
+
+
+def _cache_embedded_track_info(json_info, track_entries) -> None:
+    """Remember the MKV metadata (track name, language, number, flags) of every
+    extracted ASS/SSA track, keyed by the extracted file path, so the Fonts Analysis
+    dialog can label each group with the name the track will keep in the output."""
+    by_id = {str(track.get("id")): track for track in json_info.get("tracks", [])}
+    for track_id, output_path in track_entries:
+        track = by_id.get(str(track_id))
+        if track is None:
+            _embedded_subtitle_info_cache.pop(str(output_path), None)
+            continue
+        properties = track.get("properties") or {}
+        _embedded_subtitle_info_cache[str(output_path)] = {
+            "id": str(track_id),
+            "name": str(properties.get("track_name") or "").strip(),
+            "language": str(properties.get("language") or "").strip(),
+            "number": properties.get("number", track.get("number")),
+            "default": bool(properties.get("default_track")),
+            "forced": bool(properties.get("forced_track")),
+        }
+
+
+def get_embedded_subtitle_track_info(subtitle_path) -> dict:
+    """Metadata of an extracted embedded subtitle track as reported by mkvmerge
+    (track name, language, number, default/forced). Empty when unknown."""
+    return _embedded_subtitle_info_cache.get(str(subtitle_path), {})
+
+
+_SUBTITLE_TITLE_CACHE: dict[str, tuple] = {}
+_SUBTITLE_TITLE_RE = re.compile(r"^Title\s*:\s*(.*)$", re.IGNORECASE)
+
+
+def get_subtitle_title(path) -> str:
+    """`Title:` of the ASS/SSA [Script Info] section, cached per (path, mtime).
+    Only the header of the file is read, since the title lives there."""
+    cache_key = str(path)
+    try:
+        stat = os.stat(cache_key)
+        stamp = (stat.st_mtime, stat.st_size)
+    except Exception:
+        return ""
+    cached = _SUBTITLE_TITLE_CACHE.get(cache_key)
+    if cached is not None and cached[0] == stamp:
+        return cached[1]
+    title = ""
+    try:
+        with open(cache_key, "rb") as subtitle_file:
+            head = subtitle_file.read(65536)
+        if head[:2] in (b"\xff\xfe", b"\xfe\xff"):
+            text = head.decode("utf-16", errors="replace")
+        else:
+            text = head.decode("utf-8-sig", errors="replace")
+        in_script_info = False
+        for line in text.splitlines():
+            stripped = line.strip()
+            if stripped.startswith("["):
+                in_script_info = stripped.lower().startswith("[script info")
+                continue
+            if not in_script_info:
+                continue
+            match = _SUBTITLE_TITLE_RE.match(stripped)
+            if match:
+                title = match.group(1).strip()
+                break
+    except Exception:
+        title = ""
+    _SUBTITLE_TITLE_CACHE[cache_key] = (stamp, title)
+    return title
+
+
 def extract_embedded_assets(video_path) -> tuple[list[Path], list[Path]]:
     """Extract the attachments and the surviving ASS/SSA subtitle tracks of an MKV
     into the EmbeddedExtractedFolder, returning (attachments, subtitle tracks).
@@ -739,6 +811,7 @@ def extract_embedded_assets(video_path) -> tuple[list[Path], list[Path]]:
                 / f"{video_hash}_t{track_id}_{video_path.stem}.ass"
             )
             track_entries.append((track_id, output_path))
+        _cache_embedded_track_info(json_info, track_entries)
         missing_tracks = [
             (track_id, output_path)
             for track_id, output_path in track_entries
